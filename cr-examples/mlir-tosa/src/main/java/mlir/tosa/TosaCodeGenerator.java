@@ -156,11 +156,40 @@ public final class TosaCodeGenerator {
      */
     private static String mapToTosaOp(String methodName) {
         return switch (methodName) {
+            // Arithmetic operations
             case "Add", "add" -> "tosa.add";
             case "Mul", "mul" -> "tosa.mul";
-            case "MatMul", "matmul" -> "tosa.matmul";
             case "Sub", "sub" -> "tosa.sub";
+            case "Div", "div" -> "tosa.reciprocal+mul"; // TOSA uses reciprocal+mul for div
             case "Negate", "negate" -> "tosa.negate";
+            case "Reciprocal", "reciprocal" -> "tosa.reciprocal";
+
+            // Matrix operations
+            case "MatMul", "matmul" -> "tosa.matmul";
+
+            // Convolution and pooling
+            case "Conv2D", "conv2d" -> "tosa.conv2d";
+            case "MaxPool2D", "maxPool2d" -> "tosa.max_pool2d";
+            case "AvgPool2D", "avgPool2d" -> "tosa.avg_pool2d";
+
+            // Activations
+            case "Clamp", "clamp" -> "tosa.clamp";
+            case "Relu", "relu" -> "tosa.clamp"; // ReLU is clamp(0, max)
+
+            // Shape operations
+            case "Reshape", "reshape" -> "tosa.reshape";
+            case "Flatten", "flatten" -> "tosa.reshape"; // Flatten uses reshape
+
+            // Reduction operations
+            case "ReduceSum", "reduceSum" -> "tosa.reduce_sum";
+            case "ReduceMax", "reduceMax" -> "tosa.reduce_max";
+
+            // Element-wise operations
+            case "Exp", "exp" -> "tosa.exp";
+
+            // Softmax (composed operation)
+            case "Softmax", "softmax" -> "tosa.softmax"; // Note: TOSA doesn't have native softmax
+
             default -> null;
         };
     }

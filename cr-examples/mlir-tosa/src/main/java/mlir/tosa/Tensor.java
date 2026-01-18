@@ -152,6 +152,71 @@ public final class Tensor<T> {
         return new Tensor<>(arena, shape, elementType, data);
     }
 
+    /**
+     * Create a tensor from raw bytes (little-endian float32).
+     * Useful for loading pre-trained weights from binary files.
+     *
+     * @param shape Tensor shape
+     * @param bytes Raw bytes (little-endian float32)
+     * @return Float tensor with loaded data
+     */
+    @SuppressWarnings("unchecked")
+    public static Tensor<Float> ofBytes(long[] shape, byte[] bytes) {
+        Arena arena = Arena.ofAuto();
+        long numElements = 1;
+        for (long dim : shape) numElements *= dim;
+
+        if (bytes.length != numElements * 4) {
+            throw new IllegalArgumentException(
+                "Byte array length " + bytes.length + " doesn't match shape " +
+                java.util.Arrays.toString(shape) + " (expected " + (numElements * 4) + " bytes)"
+            );
+        }
+
+        MemorySegment segment = arena.allocate(ValueLayout.JAVA_FLOAT, numElements);
+
+        // Convert bytes to floats (little-endian)
+        for (int i = 0; i < numElements; i++) {
+            int offset = i * 4;
+            int bits = (bytes[offset] & 0xFF) |
+                       ((bytes[offset + 1] & 0xFF) << 8) |
+                       ((bytes[offset + 2] & 0xFF) << 16) |
+                       ((bytes[offset + 3] & 0xFF) << 24);
+            float value = Float.intBitsToFloat(bits);
+            segment.setAtIndex(ValueLayout.JAVA_FLOAT, i, value);
+        }
+
+        return new Tensor<>(arena, shape, ElementType.FLOAT32, segment);
+    }
+
+    /**
+     * Create a tensor from float array with given shape.
+     * Used for creating input tensors from image data.
+     *
+     * @param shape Tensor shape
+     * @param data Float array data
+     * @return Float tensor
+     */
+    public static Tensor<Float> ofFloats(long[] shape, float[] data) {
+        Arena arena = Arena.ofAuto();
+        long numElements = 1;
+        for (long dim : shape) numElements *= dim;
+
+        if (data.length != numElements) {
+            throw new IllegalArgumentException(
+                "Data length " + data.length + " doesn't match shape " +
+                java.util.Arrays.toString(shape) + " (expected " + numElements + " elements)"
+            );
+        }
+
+        MemorySegment segment = arena.allocate(ValueLayout.JAVA_FLOAT, numElements);
+        for (int i = 0; i < data.length; i++) {
+            segment.setAtIndex(ValueLayout.JAVA_FLOAT, i, data[i]);
+        }
+
+        return new Tensor<>(arena, shape, ElementType.FLOAT32, segment);
+    }
+
     // Accessors
 
     public long[] shape() {
@@ -216,6 +281,103 @@ public final class Tensor<T> {
      */
     public Tensor<T> matmul(Tensor<T> other) {
         return TosaOperators.MatMul(this, other);
+    }
+
+    /**
+     * Element-wise subtraction.
+     * Fluent API: a.sub(b) instead of TosaOperators.Sub(a, b)
+     *
+     * @param other The tensor to subtract
+     * @return Result of this - other
+     */
+    public Tensor<T> sub(Tensor<T> other) {
+        return TosaOperators.Sub(this, other);
+    }
+
+    /**
+     * ReLU activation (max(0, x)).
+     * Fluent API: a.relu() instead of TosaOperators.Relu(a)
+     *
+     * @return ReLU activated tensor
+     */
+    public Tensor<T> relu() {
+        return TosaOperators.Relu(this);
+    }
+
+    /**
+     * Clamp values to a range.
+     * Fluent API: a.clamp(min, max) instead of TosaOperators.Clamp(a, min, max)
+     *
+     * @param minVal Minimum value
+     * @param maxVal Maximum value
+     * @return Clamped tensor
+     */
+    public Tensor<T> clamp(float minVal, float maxVal) {
+        return TosaOperators.Clamp(this, minVal, maxVal);
+    }
+
+    /**
+     * Reshape tensor to new shape.
+     * Fluent API: a.reshape(shape) instead of TosaOperators.Reshape(a, shape)
+     *
+     * @param newShape New shape (total elements must match)
+     * @return Reshaped tensor
+     */
+    public Tensor<T> reshape(long[] newShape) {
+        return TosaOperators.Reshape(this, newShape);
+    }
+
+    /**
+     * Flatten tensor from given axis.
+     * Fluent API: a.flatten(axis) instead of TosaOperators.Flatten(a, axis)
+     *
+     * @param axis Axis from which to flatten
+     * @return Flattened tensor
+     */
+    public Tensor<T> flatten(int axis) {
+        return TosaOperators.Flatten(this, axis);
+    }
+
+    /**
+     * Element-wise exponential.
+     * Fluent API: a.exp() instead of TosaOperators.Exp(a)
+     *
+     * @return Tensor with exp(x) values
+     */
+    public Tensor<T> exp() {
+        return TosaOperators.Exp(this);
+    }
+
+    /**
+     * Element-wise reciprocal (1/x).
+     * Fluent API: a.reciprocal() instead of TosaOperators.Reciprocal(a)
+     *
+     * @return Tensor with 1/x values
+     */
+    public Tensor<T> reciprocal() {
+        return TosaOperators.Reciprocal(this);
+    }
+
+    /**
+     * Element-wise division.
+     * Fluent API: a.div(b) instead of TosaOperators.Div(a, b)
+     *
+     * @param other The divisor tensor
+     * @return Result of this / other
+     */
+    public Tensor<T> div(Tensor<T> other) {
+        return TosaOperators.Div(this, other);
+    }
+
+    /**
+     * Softmax along an axis.
+     * Fluent API: a.softmax(axis) instead of TosaOperators.Softmax(a, axis)
+     *
+     * @param axis Axis along which to compute softmax
+     * @return Softmax probabilities
+     */
+    public Tensor<T> softmax(int axis) {
+        return TosaOperators.Softmax(this, axis);
     }
 
     // Utility methods
