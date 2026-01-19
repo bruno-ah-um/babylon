@@ -15,7 +15,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.0</junit.version>
         <!-- Set to false to enable jextract if installed -->
-        <skip.jextract>true</skip.jextract>
+        <skip.jextract>false</skip.jextract>
     </properties>
 
     <dependencies>
@@ -155,7 +155,7 @@
                     <!-- OPTIONAL: Only runs if jextract is installed and skip.jextract is not set -->
                     <execution>
                         <id>jextract-generate-bindings</id>
-                        <phase>compile</phase>
+                        <phase>generate-sources</phase>
                         <goals>
                             <goal>exec</goal>
                         </goals>

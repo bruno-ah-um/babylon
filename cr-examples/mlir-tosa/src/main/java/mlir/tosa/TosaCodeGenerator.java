@@ -6,17 +6,23 @@ import jdk.incubator.code.TypeElement;
 import jdk.incubator.code.Value;
 import jdk.incubator.code.dialect.core.CoreOp;
 import jdk.incubator.code.dialect.java.JavaOp;
+import mlir.tosa.bindings.mlir_tosa_c_api_h;
 
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Generates TOSA/MLIR code from Java code reflection models.
+ * Generates TOSA/MLIR code from Java code reflection models using native MLIR bindings.
  *
  * This class transforms the Java code model captured via @Reflect annotations
- * into TOSA (Tensor Operator Set Architecture) MLIR representation.
+ * into TOSA (Tensor Operator Set Architecture) MLIR representation using the
+ * native mlir_tosa_c library for proper MLIR IR construction and validation.
  */
 public final class TosaCodeGenerator {
 
@@ -45,229 +51,456 @@ public final class TosaCodeGenerator {
      * @return TOSA MLIR code as a string
      */
     public static String generateTosa(CoreOp.FuncOp funcOp, String funcName) {
-        StringBuilder sb = new StringBuilder();
-        GeneratorContext ctx = new GeneratorContext();
+        try (Arena arena = Arena.ofConfined()) {
+            // Create MLIR context and module
+            MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
+            if (context.equals(MemorySegment.NULL)) {
+                throw new RuntimeException("Failed to create MLIR context: " + getLastError());
+            }
 
-        // Get function parameters
+            MemorySegment module = mlir_tosa_c_api_h.mlir_module_create(context);
+            if (module.equals(MemorySegment.NULL)) {
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+                throw new RuntimeException("Failed to create MLIR module: " + getLastError());
+            }
+
+            try {
+                GeneratorContext ctx = new GeneratorContext(arena, context);
+
+                // Get function parameters
+                List<Block.Parameter> params = funcOp.body().entryBlock().parameters();
+
+                // Create input types
+                List<MemorySegment> inputTypes = new ArrayList<>();
+                for (Block.Parameter param : params) {
+                    MemorySegment tosaType = javaTypeToNativeTosaType(ctx, param.type());
+                    inputTypes.add(tosaType);
+                }
+
+                // Create output type
+                MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType());
+
+                // Allocate arrays for input/output types
+                MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
+                for (int i = 0; i < inputTypes.size(); i++) {
+                    inputTypesArray.setAtIndex(ValueLayout.ADDRESS, i, inputTypes.get(i));
+                }
+
+                MemorySegment outputTypesArray = arena.allocate(ValueLayout.ADDRESS, 1);
+                outputTypesArray.setAtIndex(ValueLayout.ADDRESS, 0, outputType);
+
+                // Create function name as native string
+                MemorySegment funcNameNative = arena.allocateFrom(funcName);
+
+                // Create the function
+                MemorySegment function = mlir_tosa_c_api_h.mlir_function_create(
+                    module,
+                    funcNameNative,
+                    inputTypesArray,
+                    inputTypes.size(),
+                    outputTypesArray,
+                    1
+                );
+
+                if (function.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to create MLIR function: " + getLastError());
+                }
+
+                // Map function arguments to values
+                for (int i = 0; i < params.size(); i++) {
+                    MemorySegment arg = mlir_tosa_c_api_h.mlir_function_get_argument(function, i);
+                    ctx.valueHandles.put(params.get(i), arg);
+                }
+
+                // Process the function body
+                Block entryBlock = funcOp.body().entryBlock();
+                for (Op op : entryBlock.ops()) {
+                    processOp(op, ctx, function);
+                }
+
+                // Verify the module
+                int verifyResult = mlir_tosa_c_api_h.mlir_module_verify(module);
+                if (verifyResult != 0) {
+                    throw new RuntimeException("MLIR module verification failed: " + getLastError());
+                }
+
+                // Convert to string
+                MemorySegment strPtr = mlir_tosa_c_api_h.mlir_module_to_string(module);
+                if (strPtr.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to convert module to string: " + getLastError());
+                }
+
+                String result = strPtr.reinterpret(Long.MAX_VALUE).getString(0);
+                mlir_tosa_c_api_h.mlir_string_destroy(strPtr);
+
+                return result;
+            } finally {
+                mlir_tosa_c_api_h.mlir_module_destroy(module);
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+            }
+        }
+    }
+
+    /**
+     * Write TOSA MLIR to a text file.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param filename The output file path
+     */
+    public static void writeTosaToFile(CoreOp.FuncOp funcOp, String funcName, String filename) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
+            if (context.equals(MemorySegment.NULL)) {
+                throw new RuntimeException("Failed to create MLIR context: " + getLastError());
+            }
+
+            MemorySegment module = mlir_tosa_c_api_h.mlir_module_create(context);
+            if (module.equals(MemorySegment.NULL)) {
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+                throw new RuntimeException("Failed to create MLIR module: " + getLastError());
+            }
+
+            try {
+                GeneratorContext ctx = new GeneratorContext(arena, context);
+                buildFunction(funcOp, funcName, module, ctx, arena);
+
+                // Write to file
+                MemorySegment filenameNative = arena.allocateFrom(filename);
+                int writeResult = mlir_tosa_c_api_h.mlir_module_write_text(module, filenameNative);
+                if (writeResult != 0) {
+                    throw new RuntimeException("Failed to write MLIR to file: " + getLastError());
+                }
+            } finally {
+                mlir_tosa_c_api_h.mlir_module_destroy(module);
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+            }
+        }
+    }
+
+    /**
+     * Write TOSA MLIR bytecode to a file.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param filename The output file path
+     */
+    public static void writeTosaBytecode(CoreOp.FuncOp funcOp, String funcName, String filename) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
+            if (context.equals(MemorySegment.NULL)) {
+                throw new RuntimeException("Failed to create MLIR context: " + getLastError());
+            }
+
+            MemorySegment module = mlir_tosa_c_api_h.mlir_module_create(context);
+            if (module.equals(MemorySegment.NULL)) {
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+                throw new RuntimeException("Failed to create MLIR module: " + getLastError());
+            }
+
+            try {
+                GeneratorContext ctx = new GeneratorContext(arena, context);
+                buildFunction(funcOp, funcName, module, ctx, arena);
+
+                // Write bytecode to file
+                MemorySegment filenameNative = arena.allocateFrom(filename);
+                int writeResult = mlir_tosa_c_api_h.mlir_module_write_bytecode(module, filenameNative);
+                if (writeResult != 0) {
+                    throw new RuntimeException("Failed to write MLIR bytecode to file: " + getLastError());
+                }
+            } finally {
+                mlir_tosa_c_api_h.mlir_module_destroy(module);
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+            }
+        }
+    }
+
+    /**
+     * Build a function in the given module.
+     */
+    private static void buildFunction(CoreOp.FuncOp funcOp, String funcName,
+                                       MemorySegment module, GeneratorContext ctx, Arena arena) {
         List<Block.Parameter> params = funcOp.body().entryBlock().parameters();
 
-        // Build function signature
-        sb.append("func.func @").append(funcName).append("(");
-
-        // Add parameters with TOSA tensor types
-        for (int i = 0; i < params.size(); i++) {
-            if (i > 0) sb.append(", ");
-            Block.Parameter param = params.get(i);
-            String paramName = getParamName(funcOp, i);
-            String tosaType = javaTypeToTosaType(param.type());
-            ctx.valueNames.put(param, "%" + paramName);
-            sb.append("%").append(paramName).append(": ").append(tosaType);
+        // Create input types
+        List<MemorySegment> inputTypes = new ArrayList<>();
+        for (Block.Parameter param : params) {
+            MemorySegment tosaType = javaTypeToNativeTosaType(ctx, param.type());
+            inputTypes.add(tosaType);
         }
 
-        // Determine return type from function
-        String returnType = javaTypeToTosaType(funcOp.invokableType().returnType());
-        sb.append(") -> ").append(returnType).append(" {\n");
+        // Create output type
+        MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType());
+
+        // Allocate arrays for input/output types
+        MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
+        for (int i = 0; i < inputTypes.size(); i++) {
+            inputTypesArray.setAtIndex(ValueLayout.ADDRESS, i, inputTypes.get(i));
+        }
+
+        MemorySegment outputTypesArray = arena.allocate(ValueLayout.ADDRESS, 1);
+        outputTypesArray.setAtIndex(ValueLayout.ADDRESS, 0, outputType);
+
+        // Create function name as native string
+        MemorySegment funcNameNative = arena.allocateFrom(funcName);
+
+        // Create the function
+        MemorySegment function = mlir_tosa_c_api_h.mlir_function_create(
+            module,
+            funcNameNative,
+            inputTypesArray,
+            inputTypes.size(),
+            outputTypesArray,
+            1
+        );
+
+        if (function.equals(MemorySegment.NULL)) {
+            throw new RuntimeException("Failed to create MLIR function: " + getLastError());
+        }
+
+        // Map function arguments to values
+        for (int i = 0; i < params.size(); i++) {
+            MemorySegment arg = mlir_tosa_c_api_h.mlir_function_get_argument(function, i);
+            ctx.valueHandles.put(params.get(i), arg);
+        }
 
         // Process the function body
         Block entryBlock = funcOp.body().entryBlock();
         for (Op op : entryBlock.ops()) {
-            String opCode = generateOpCode(op, ctx);
-            if (opCode != null && !opCode.isEmpty()) {
-                sb.append(opCode);
-            }
+            processOp(op, ctx, function);
         }
 
-        sb.append("}\n");
-        return sb.toString();
+        // Verify the module
+        int verifyResult = mlir_tosa_c_api_h.mlir_module_verify(module);
+        if (verifyResult != 0) {
+            throw new RuntimeException("MLIR module verification failed: " + getLastError());
+        }
     }
 
     /**
-     * Get parameter name from var declarations in the function body.
+     * Process a single operation from the code model.
      */
-    private static String getParamName(CoreOp.FuncOp funcOp, int paramIndex) {
-        Block entryBlock = funcOp.body().entryBlock();
-        int varIndex = 0;
-        for (Op op : entryBlock.ops()) {
-            if (op instanceof CoreOp.VarOp varOp) {
-                if (varIndex == paramIndex) {
-                    return varOp.varName();
-                }
-                varIndex++;
-            }
-        }
-        return "arg" + paramIndex;
-    }
-
-    /**
-     * Generate code for a single operation.
-     */
-    private static String generateOpCode(Op op, GeneratorContext ctx) {
+    private static MemorySegment processOp(Op op, GeneratorContext ctx, MemorySegment function) {
         return switch (op) {
             case CoreOp.VarOp varOp -> {
                 // Variable declarations - map the var to the input value
                 Value inputValue = varOp.operands().getFirst();
-                String inputName = ctx.valueNames.get(inputValue);
-                if (inputName != null) {
-                    ctx.varToValue.put(varOp.result(), inputName);
+                MemorySegment handle = ctx.valueHandles.get(inputValue);
+                if (handle != null) {
+                    ctx.varToHandle.put(varOp.result(), handle);
                 }
-                yield null; // No code generated for var declarations
+                yield MemorySegment.NULL;
             }
             case CoreOp.VarAccessOp.VarLoadOp loadOp -> {
                 // Variable loads - look up the actual value
                 Value varValue = loadOp.operands().getFirst();
-                String varName = ctx.varToValue.get(varValue);
-                if (varName != null) {
-                    ctx.valueNames.put(loadOp.result(), varName);
+                MemorySegment handle = ctx.varToHandle.get(varValue);
+                if (handle != null) {
+                    ctx.valueHandles.put(loadOp.result(), handle);
                 }
-                yield null; // No code generated for var loads
+                yield MemorySegment.NULL;
             }
             case JavaOp.InvokeOp invokeOp -> {
-                yield generateInvokeOp(invokeOp, ctx);
+                yield processInvokeOp(invokeOp, ctx, function);
             }
             case CoreOp.ReturnOp returnOp -> {
                 Value returnValue = returnOp.operands().getFirst();
-                String valueName = ctx.valueNames.get(returnValue);
-                yield "    return " + valueName + " : " + javaTypeToTosaType(returnValue.type()) + "\n";
+                MemorySegment valueHandle = ctx.valueHandles.get(returnValue);
+                if (valueHandle != null && !valueHandle.equals(MemorySegment.NULL)) {
+                    // Create array with single return value
+                    MemorySegment valuesArray = ctx.arena.allocate(ValueLayout.ADDRESS, 1);
+                    valuesArray.setAtIndex(ValueLayout.ADDRESS, 0, valueHandle);
+                    mlir_tosa_c_api_h.mlir_function_add_return(function, valuesArray, 1);
+                }
+                yield MemorySegment.NULL;
             }
-            default -> null;
+            default -> MemorySegment.NULL;
         };
     }
 
     /**
-     * Generate code for method invocations (TOSA operations).
+     * Process a method invocation (TOSA operation).
      */
-    private static String generateInvokeOp(JavaOp.InvokeOp invokeOp, GeneratorContext ctx) {
+    private static MemorySegment processInvokeOp(JavaOp.InvokeOp invokeOp, GeneratorContext ctx,
+                                                  MemorySegment function) {
         String methodRef = invokeOp.invokeDescriptor().toString();
         String methodName = invokeOp.invokeDescriptor().name();
 
         // Check if this is a TOSA operation
-        if (methodRef.contains("TosaOperators::") || methodRef.contains("Tensor::")) {
-            String tosaOp = mapToTosaOp(methodName);
-            if (tosaOp != null) {
-                return generateTosaOp(tosaOp, invokeOp, ctx);
-            }
+        if (!methodRef.contains("TosaOperators::") && !methodRef.contains("Tensor::")) {
+            return MemorySegment.NULL;
         }
 
-        return null;
-    }
-
-    /**
-     * Map Java method names to TOSA operation names.
-     */
-    private static String mapToTosaOp(String methodName) {
-        return switch (methodName) {
-            // Arithmetic operations
-            case "Add", "add" -> "tosa.add";
-            case "Mul", "mul" -> "tosa.mul";
-            case "Sub", "sub" -> "tosa.sub";
-            case "Div", "div" -> "tosa.reciprocal+mul"; // TOSA uses reciprocal+mul for div
-            case "Negate", "negate" -> "tosa.negate";
-            case "Reciprocal", "reciprocal" -> "tosa.reciprocal";
-
-            // Matrix operations
-            case "MatMul", "matmul" -> "tosa.matmul";
-
-            // Convolution and pooling
-            case "Conv2D", "conv2d" -> "tosa.conv2d";
-            case "MaxPool2D", "maxPool2d" -> "tosa.max_pool2d";
-            case "AvgPool2D", "avgPool2d" -> "tosa.avg_pool2d";
-
-            // Activations
-            case "Clamp", "clamp" -> "tosa.clamp";
-            case "Relu", "relu" -> "tosa.clamp"; // ReLU is clamp(0, max)
-
-            // Shape operations
-            case "Reshape", "reshape" -> "tosa.reshape";
-            case "Flatten", "flatten" -> "tosa.reshape"; // Flatten uses reshape
-
-            // Reduction operations
-            case "ReduceSum", "reduceSum" -> "tosa.reduce_sum";
-            case "ReduceMax", "reduceMax" -> "tosa.reduce_max";
-
-            // Element-wise operations
-            case "Exp", "exp" -> "tosa.exp";
-
-            // Softmax (composed operation)
-            case "Softmax", "softmax" -> "tosa.softmax"; // Note: TOSA doesn't have native softmax
-
-            default -> null;
-        };
-    }
-
-    /**
-     * Generate TOSA operation code.
-     */
-    private static String generateTosaOp(String tosaOp, JavaOp.InvokeOp invokeOp, GeneratorContext ctx) {
-        StringBuilder sb = new StringBuilder();
-
-        // Get operand names
+        // Get operand handles
         List<Value> operands = invokeOp.operands();
-        String[] operandNames = new String[operands.size()];
-        String[] operandTypes = new String[operands.size()];
-
-        for (int i = 0; i < operands.size(); i++) {
-            operandNames[i] = ctx.valueNames.get(operands.get(i));
-            operandTypes[i] = javaTypeToTosaType(operands.get(i).type());
+        List<MemorySegment> operandHandles = new ArrayList<>();
+        for (Value operand : operands) {
+            MemorySegment handle = ctx.valueHandles.get(operand);
+            if (handle == null) {
+                return MemorySegment.NULL; // Skip if operand not found
+            }
+            operandHandles.add(handle);
         }
-
-        // Generate result name
-        String resultName = "%" + ctx.nextResultIndex++;
-        ctx.valueNames.put(invokeOp.result(), resultName);
 
         // Get result type
-        String resultType = javaTypeToTosaType(invokeOp.result().type());
+        MemorySegment resultType = javaTypeToNativeTosaType(ctx, invokeOp.result().type());
 
-        // Format: %result = tosa.op %operand1, %operand2 : (type1, type2) -> result_type
-        sb.append("    ").append(resultName).append(" = ").append(tosaOp).append(" ");
+        // Generate the appropriate TOSA operation
+        MemorySegment result = switch (methodName) {
+            // Binary operations
+            case "Add", "add" -> {
+                if (operandHandles.size() >= 2) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_add(function,
+                        operandHandles.get(0), operandHandles.get(1), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Sub", "sub" -> {
+                if (operandHandles.size() >= 2) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_sub(function,
+                        operandHandles.get(0), operandHandles.get(1), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Mul", "mul" -> {
+                if (operandHandles.size() >= 2) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_mul(function,
+                        operandHandles.get(0), operandHandles.get(1), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "MatMul", "matmul" -> {
+                if (operandHandles.size() >= 2) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_matmul(function,
+                        operandHandles.get(0), operandHandles.get(1), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
 
-        // Add operands
-        for (int i = 0; i < operandNames.length; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(operandNames[i]);
+            // Unary operations
+            case "Negate", "negate" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_negate(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Reciprocal", "reciprocal" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_reciprocal(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Exp", "exp" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_exp(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Log", "log" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_log(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // Activation functions
+            case "Relu", "relu" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_relu(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Sigmoid", "sigmoid" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_sigmoid(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+            case "Tanh", "tanh" -> {
+                if (!operandHandles.isEmpty()) {
+                    yield mlir_tosa_c_api_h.mlir_tosa_tanh(function,
+                        operandHandles.get(0), resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // Division uses reciprocal + mul
+            case "Div", "div" -> {
+                if (operandHandles.size() >= 2) {
+                    MemorySegment reciprocal = mlir_tosa_c_api_h.mlir_tosa_reciprocal(function,
+                        operandHandles.get(1), resultType);
+                    yield mlir_tosa_c_api_h.mlir_tosa_mul(function,
+                        operandHandles.get(0), reciprocal, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            default -> MemorySegment.NULL;
+        };
+
+        // Store the result handle
+        if (result != null && !result.equals(MemorySegment.NULL)) {
+            ctx.valueHandles.put(invokeOp.result(), result);
         }
 
-        // Add type signature
-        sb.append(" : (");
-        for (int i = 0; i < operandTypes.length; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(operandTypes[i]);
-        }
-        sb.append(") -> ").append(resultType);
-
-        sb.append("\n");
-        return sb.toString();
+        return result;
     }
 
     /**
-     * Convert Java type to TOSA tensor type.
-     * For simplicity, we use generic tensor types. In a full implementation,
-     * we would track actual tensor shapes.
+     * Convert Java type to native TOSA tensor type.
      */
-    private static String javaTypeToTosaType(TypeElement type) {
+    private static MemorySegment javaTypeToNativeTosaType(GeneratorContext ctx, TypeElement type) {
         String typeStr = type.toString();
 
-        // Extract element type from Tensor<T>
+        // Determine element type
+        MemorySegment elementType;
         if (typeStr.contains("Tensor<java.lang.Float>") || typeStr.contains("Tensor<Float>")) {
-            return "tensor<*xf32>";  // Unknown shape, float32
+            elementType = mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context);
         } else if (typeStr.contains("Tensor<java.lang.Double>") || typeStr.contains("Tensor<Double>")) {
-            return "tensor<*xf64>";  // Unknown shape, float64
+            elementType = mlir_tosa_c_api_h.mlir_type_create_f64(ctx.context);
         } else if (typeStr.contains("Tensor<java.lang.Integer>") || typeStr.contains("Tensor<Integer>")) {
-            return "tensor<*xi32>";  // Unknown shape, int32
+            elementType = mlir_tosa_c_api_h.mlir_type_create_i32(ctx.context);
         } else if (typeStr.contains("Tensor<java.lang.Long>") || typeStr.contains("Tensor<Long>")) {
-            return "tensor<*xi64>";  // Unknown shape, int64
-        } else if (typeStr.contains("Tensor")) {
-            return "tensor<*xf32>";  // Default to float32
+            elementType = mlir_tosa_c_api_h.mlir_type_create_i64(ctx.context);
+        } else {
+            // Default to float32
+            elementType = mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context);
         }
 
-        return "tensor<*xf32>";  // Default
+        // Create dynamic tensor type (unknown shape)
+        // Using rank=0 for unranked tensor (tensor<*xf32>)
+        return mlir_tosa_c_api_h.mlir_type_create_tensor_dynamic(ctx.context, 0, elementType);
+    }
+
+    /**
+     * Get the last error message from the native library.
+     */
+    private static String getLastError() {
+        MemorySegment errorPtr = mlir_tosa_c_api_h.mlir_get_last_error();
+        if (errorPtr.equals(MemorySegment.NULL)) {
+            return "Unknown error";
+        }
+        return errorPtr.reinterpret(Long.MAX_VALUE).getString(0);
     }
 
     /**
      * Context for tracking values during code generation.
      */
     private static class GeneratorContext {
-        Map<Value, String> valueNames = new HashMap<>();
-        Map<Value, String> varToValue = new HashMap<>();
-        int nextResultIndex = 0;
+        final Arena arena;
+        final MemorySegment context;
+        final Map<Value, MemorySegment> valueHandles = new HashMap<>();
+        final Map<Value, MemorySegment> varToHandle = new HashMap<>();
+
+        GeneratorContext(Arena arena, MemorySegment context) {
+            this.arena = arena;
+            this.context = context;
+        }
     }
 }
