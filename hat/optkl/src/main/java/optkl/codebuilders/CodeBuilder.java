@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,7 +27,7 @@ package optkl.codebuilders;
 import jdk.incubator.code.Op;
 import jdk.incubator.code.dialect.core.CoreOp;
 import jdk.incubator.code.dialect.java.JavaOp;
-import optkl.util.StreamMutable;
+import optkl.util.Mutable;
 
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -37,7 +37,8 @@ import java.util.stream.Stream;
  *
  * @author Gary Frost
  */
-public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<T> implements CodeRenderer<T> {
+public abstract class CodeBuilder<T extends CodeBuilder<T>>
+        extends TextBuilder<T> implements CodeRenderer<T> {
 
     public T semicolon() {
         return symbol(";");
@@ -95,9 +96,16 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
         return symbol("++");
     }
 
+    public T plusEquals() {
+        return symbol("+=");
+    }
 
     public T minusminus() {
         return symbol("--");
+    }
+
+    public T ne() {
+        return pling().equals();
     }
 
     public T lineComment(String line) {
@@ -373,7 +381,7 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
         return emitText("<");
     }
 
-    public T bar() {
+    public T bitwiseOR() {
         return symbol("|");
     }
 
@@ -484,7 +492,7 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
     }
 
     public <I> T separated(Iterable<I> iterable, Consumer<T> separator, Consumer<I> consumer) {
-        var first = StreamMutable.of(true);
+        var first = Mutable.of(true);
         iterable.forEach(t -> {
             if (first.get()) {
                 first.set(false);
@@ -523,7 +531,7 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
     }
 
     public <I> T barSeparated(Iterable<I> iterable, Consumer<I> consumer) {
-        return separated(iterable, _ -> bar(), consumer);
+        return separated(iterable, _ -> bitwiseOR(), consumer);
     }
 
     public <I> T semicolonNlSeparated(Iterable<I> iterable, Consumer<I> consumer) {
@@ -535,7 +543,7 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
     }
 
     public <I> T separated(Stream<I> stream, Consumer<T> separator, Consumer<I> consumer) {
-        var first = StreamMutable.of(true);
+        var first = Mutable.of(true);
         stream.forEach(t -> {
             if (first.get()) {
                 first.set(false);
@@ -695,7 +703,7 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
 
     public final T oracleCopyright(){
         return blockComment("""
-                * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
+                * Copyright (c) 2025-2026, Oracle and/or its affiliates. All rights reserved.
                 * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
                 *
                 * This code is free software; you can redistribute it and/or modify it
@@ -723,6 +731,10 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
 
     public final T varName(CoreOp.VarOp varOp) {
         return identifier(varOp.varName());
+    }
+    public final T varName(CoreOp.VarAccessOp.VarLoadOp varOp) {
+        blockInlineComment(varOp.toString());
+        return self();
     }
     public final  T funcName(CoreOp.FuncCallOp funcCallOp){
         return identifier(funcCallOp.funcName());
@@ -765,7 +777,7 @@ public abstract class CodeBuilder<T extends CodeBuilder<T>> extends TextBuilder<
             case JavaOp.EqOp o -> equals().equals();
             case JavaOp.NotOp o -> pling();
             case JavaOp.AndOp o -> ampersand();
-            case JavaOp.OrOp o -> bar();
+            case JavaOp.OrOp o -> bitwiseOR();
             case JavaOp.XorOp o -> hat();
             case JavaOp.ConditionalAndOp o -> condAnd();
             case JavaOp.ConditionalOrOp o -> condOr();

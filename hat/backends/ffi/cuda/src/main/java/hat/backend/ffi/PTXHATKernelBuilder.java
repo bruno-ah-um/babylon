@@ -25,7 +25,6 @@
 package hat.backend.ffi;
 
 import optkl.FuncOpParams;
-import optkl.Invoke;
 import optkl.ParamVar;
 import optkl.codebuilders.CodeBuilder;
 
@@ -42,8 +41,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import static optkl.FieldAccess.fieldAccessOpHelper;
-import static optkl.Invoke.invokeOpHelper;
+import static optkl.OpHelper.Named.NamedStaticOrInstance.FieldAccess.fieldAccess;
+import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
+
+import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
 
 
 public class PTXHATKernelBuilder extends CodeBuilder<PTXHATKernelBuilder> {
@@ -141,7 +142,7 @@ public class PTXHATKernelBuilder extends CodeBuilder<PTXHATKernelBuilder> {
         block(block);
         colon().nl();
         ops.forEach(op -> {
-            if (invokeOpHelper(lookup,op) instanceof Invoke invoke && !invoke.isMappableIface()) {
+            if (invoke(lookup,op) instanceof Invoke invoke && !invoke.isMappableIface()) {
                 ptxIndent().convert(lookup,op).nl();
             } else {
                 ptxIndent().convert(lookup,op).semicolon().nl();
@@ -182,7 +183,7 @@ public class PTXHATKernelBuilder extends CodeBuilder<PTXHATKernelBuilder> {
             case JavaOp.ConvOp $ -> conv($);
             case CoreOp.ConstantOp $ -> constant($);
             case CoreOp.YieldOp $ -> javaYield($);
-            case JavaOp.InvokeOp $ -> methodCall(invokeOpHelper(lookup,$));
+            case JavaOp.InvokeOp $ -> methodCall(invoke(lookup,$));
             case CoreOp.VarOp $ when ParamVar.of($) != null -> varFuncDeclaration($);
             case CoreOp.VarOp $ -> varDeclaration($);
             case CoreOp.ReturnOp $ -> ret($);
@@ -220,7 +221,7 @@ public class PTXHATKernelBuilder extends CodeBuilder<PTXHATKernelBuilder> {
 
     public void fieldLoad(MethodHandles.Lookup lookup,JavaOp.FieldAccessOp.FieldLoadOp fieldLoadOp) {
 
-        var fieldAccess = fieldAccessOpHelper(lookup,fieldLoadOp);
+        var fieldAccess = fieldAccess(lookup,fieldLoadOp);
         if (fieldAccess.named(Field.KC_X.toString())) {
             if (!fieldToRegMap.containsKey(Field.KC_X)) {
                 loadKcX(fieldLoadOp.result());

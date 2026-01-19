@@ -27,195 +27,110 @@ package hat.phases;
 import hat.callgraph.KernelCallGraph;
 import hat.dialect.HATVectorOp;
 import hat.types._V;
-import jdk.incubator.code.CodeElement;
 import jdk.incubator.code.CodeContext;
+import jdk.incubator.code.CodeElement;
 import jdk.incubator.code.Op;
+import jdk.incubator.code.TypeElement;
 import jdk.incubator.code.Value;
 import jdk.incubator.code.dialect.core.CoreOp;
 import jdk.incubator.code.dialect.java.JavaOp;
-import jdk.incubator.code.dialect.java.JavaType;
-import optkl.util.CallSite;
-import optkl.OpTkl;
-import optkl.util.Regex;
+import optkl.OpHelper;
+import optkl.Trxfmr;
 
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.HashMap;
+import java.util.Map;
 
-import static hat.optools.RefactorMe.inspectAllInterfaces;
-import static optkl.Invoke.invokeOpHelper;
-import static optkl.OpTkl.asOpFromResultOrNull;
-import static optkl.OpTkl.transform;
+import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
+import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
+import static optkl.OpHelper.copyLocation;
 
 public record HATVectorSelectPhase(KernelCallGraph kernelCallGraph) implements HATPhase {
-    private static final Regex xyzw = Regex.of("[xyzw]");
-
-    private boolean isVectorLane(JavaOp.InvokeOp invokeOp) {
-        return invokeOpHelper(lookup(),invokeOp).named(xyzw);
-    }
-    static boolean isVectorOperation(JavaOp.InvokeOp invokeOp, boolean laneOk) {
-        String typeElement = invokeOp.invokeDescriptor().refType().toString();
-        Set<Class<?>> interfaces;
-        try {
-            Class<?> aClass = Class.forName(typeElement); // WHY?
-            interfaces = inspectAllInterfaces(aClass);
-        } catch (ClassNotFoundException _) {
-            return false;
-        }
-        return interfaces.contains(_V.class) && laneOk;
-    }
-    int getLane(String fieldName) {
-        return switch (fieldName) {
-            case "x" -> 0;
-            case "y" -> 1;
-            case "z" -> 2;
-            case "w" -> 3;
-            default -> -1;
-        };
-    }
-
-    // recursive
-    private String findNameVector(Value v) {
-        if (OpTkl.asOpFromResultOrNull(v) instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-            return findNameVector(varLoadOp.operands().getFirst());
-        } else if (OpTkl.asOpFromResultOrNull(v)  instanceof HATVectorOp vectorViewOp) {
-            return vectorViewOp.varName();
-        }
-        throw new IllegalStateException("recurse fail findNameVector");
-
-    }
-
-
-    //recursive
-    private CoreOp.VarOp findVarOp(Value v) {
-        if (asOpFromResultOrNull(v) instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-            return findVarOp(varLoadOp.operands().getFirst());
-        } else if (asOpFromResultOrNull(v) instanceof CoreOp.VarOp varOp) {
-            return varOp;
-        }
-        return null;
-
-    }
-
-    // Code Model Pattern:
-    //  %16 : java.type:"hat.types.Float4" = var.load %15 @loc="63:28";
-    //  %17 : java.type:"float" = invoke %16 @loc="63:28" @java.ref:"hat.types.Float4::x():float";
-    private CoreOp.FuncOp vloadSelectPhase(CoreOp.FuncOp funcOp) {
-        var here = CallSite.of(this.getClass(), "vloadSelectPhase");
-        before(here, funcOp);
-        Stream<CodeElement<?, ?>> vectorSelectOps = funcOp.elements()
-                .mapMulti((codeElement, consumer) -> {
-                    if (codeElement instanceof JavaOp.InvokeOp invokeOp) {
-                        if (isVectorOperation(invokeOp, isVectorLane(invokeOp)) && (invokeOp.resultType() != JavaType.VOID)) {
-                            Value inputOperand = invokeOp.operands().getFirst();
-                            if (inputOperand instanceof Op.Result r && r.op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-                                consumer.accept(invokeOp);
-                                consumer.accept(varLoadOp);
-                            }
-                        }
-                    }
-                });
-
-        Set<CodeElement<?, ?>> nodesInvolved = vectorSelectOps.collect(Collectors.toSet());
-        funcOp = transform(here, funcOp,_->true, (blockBuilder, op) -> {
-            CodeContext context = blockBuilder.context();
-            if (!nodesInvolved.contains(op)) {
-                blockBuilder.op(op);
-            } else if (op instanceof JavaOp.InvokeOp invokeOp) {
-                List<Value> inputInvokeOp = invokeOp.operands();
-                for (Value v : inputInvokeOp) {
-                    if (v instanceof Op.Result r && r.op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-                        List<Value> outputOperandsInvokeOp = context.getValues(inputInvokeOp);
-                        int lane = getLane(invokeOp.invokeDescriptor().name());
-                        HATVectorOp vSelectOp;
-                        String name = findNameVector(varLoadOp.operands().getFirst());
-                        if (invokeOp.resultType() != JavaType.VOID) {
-                            vSelectOp = new HATVectorOp.HATVectorSelectLoadOp(name, invokeOp.resultType(), lane, outputOperandsInvokeOp);
-                        } else {
-                            throw new RuntimeException("VSelect Load Op must return a value!");
-                        }
-                        Op.Result hatSelectResult = blockBuilder.op(vSelectOp);
-                        vSelectOp.setLocation(invokeOp.location());
-                        context.mapValue(invokeOp.result(), hatSelectResult);
-                    }
-                }
-            } else if (op instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-                // Pass the value
-                context.mapValue(varLoadOp.result(), context.getValue(varLoadOp.operands().getFirst()));
-            }
-            return blockBuilder;
-        });
-
-        after(here, funcOp);
-        return funcOp;
-    }
-
-    // Pattern from the code mode:
-    // %20 : java.type:"hat.types.Float4" = var.load %15 @loc="64:13";
-    // %21 : java.type:"float" = var.load %19 @loc="64:18";
-    // invoke %20 %21 @loc="64:13" @java.ref:"hat.types.Float4::x(float):void";
-    private CoreOp.FuncOp vstoreSelectPhase(CoreOp.FuncOp funcOp) {
-        var here = CallSite.of(this.getClass(), "vstoreSelectPhase");
-        before(here, funcOp);
-        //TODO is this side table safe?
-        Stream<CodeElement<?, ?>> float4NodesInvolved = OpTkl.elements(here, funcOp)
-                .mapMulti((codeElement, consumer) -> {
-                    if (codeElement instanceof JavaOp.InvokeOp invokeOp) {
-                        if (isVectorOperation(invokeOp, isVectorLane(invokeOp))) {
-                            List<Value> inputOperandsInvoke = invokeOp.operands();
-                            Value inputOperand = inputOperandsInvoke.getFirst();
-                            if (inputOperand instanceof Op.Result r && r.op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-                                consumer.accept(invokeOp);
-                                consumer.accept(varLoadOp);
-                            }
-                        }
-                    }
-                });
-
-        Set<CodeElement<?, ?>> nodesInvolved = float4NodesInvolved.collect(Collectors.toSet());
-        funcOp = transform(here, funcOp,_->true, (blockBuilder, op) -> {
-            CodeContext context = blockBuilder.context();
-            if (!nodesInvolved.contains(op)) {
-                blockBuilder.op(op);
-            } else if (op instanceof JavaOp.InvokeOp invokeOp) {
-                List<Value> inputInvokeOp = invokeOp.operands();
-                Value v = inputInvokeOp.getFirst();
-
-                if (v instanceof Op.Result r && r.op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-                    List<Value> outputOperandsInvokeOp = context.getValues(inputInvokeOp);
-                    int lane = getLane(invokeOp.invokeDescriptor().name());
-                    HATVectorOp vSelectOp;
-                    String name = findNameVector(varLoadOp.operands().getFirst());
-                    if (invokeOp.resultType() == JavaType.VOID) {
-                        // The operand 1 in the store is the address (lane)
-                        // The operand 1 in the store is the storeValue
-                        CoreOp.VarOp resultOp = findVarOp(outputOperandsInvokeOp.get(1));
-                        vSelectOp = new HATVectorOp.HATVectorSelectStoreOp(name, invokeOp.resultType(), lane, resultOp, outputOperandsInvokeOp);
-                    } else {
-                        throw new RuntimeException("VSelect Store Op must return a value!");
-                    }
-                    Op.Result resultVStore = blockBuilder.op(vSelectOp);
-                    vSelectOp.setLocation(invokeOp.location());
-                    context.mapValue(invokeOp.result(), resultVStore);
-                }
-
-            } else if (op instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
-                // Pass the value
-                context.mapValue(varLoadOp.result(), context.getValue(varLoadOp.operands().getFirst()));
-            }
-            return blockBuilder;
-        });
-
-        after(here, funcOp);
-        return funcOp;
-    }
 
     @Override
     public CoreOp.FuncOp apply(CoreOp.FuncOp funcOp) {
-        funcOp = vloadSelectPhase(funcOp);
-        funcOp = vstoreSelectPhase(funcOp);
-        return funcOp;
+        record InvokeVar(JavaOp.InvokeOp invokeOp, CoreOp.VarAccessOp.VarLoadOp varLoadOp){
+            // recursive
+            static String vectorNameOrThrow(Value v) {
+                return switch (OpHelper.asOpFromResultOrNull(v)){
+                    case CoreOp.VarAccessOp.VarLoadOp varLoadOp ->vectorNameOrThrow(varLoadOp.operands().getFirst()); // recurse
+                    case HATVectorOp vectorOp ->vectorOp.varName();
+                    case null -> null;
+                    default -> throw new IllegalStateException("failed to find vector name");
+                };
+            }
+            String name(){
+                return vectorNameOrThrow(varLoadOp.operands().getFirst());
+            }
+            //recursive
+            private CoreOp.VarOp findVarOpOrNull(Value v) {
+                return switch (OpHelper.asOpFromResultOrNull(v)){
+                    case CoreOp.VarAccessOp.VarLoadOp varLoadOp ->findVarOpOrNull(varLoadOp.operands().getFirst()); //recurse
+                    case CoreOp.VarOp varOp->varOp;
+                    case null -> null;
+                    default ->  null;
+                };
+            }
+            public CoreOp.VarOp varOpFromOperand(int idx){
+                return findVarOpOrNull(invokeOp.operands().get(idx));
+            }
+            public TypeElement returnType() {
+                return invokeOp.resultType();
+            }
+            int laneIdx() {
+                return "xyzw".indexOf(invokeOp.invokeDescriptor().name().charAt(0));
+            }
+
+        }
+
+        Map<CodeElement<?,?>, InvokeVar> ceToInvokeVar = new HashMap<>();
+        Invoke.stream(lookup(),funcOp)
+                .filter(invoke ->
+                        invoke.named("x","y","z","w")
+                                && invoke.refIs(_V.class)
+                                && invoke.opFromFirstOperandOrThrow() instanceof CoreOp.VarAccessOp.VarLoadOp)
+                .map(invoke ->
+                        new InvokeVar(invoke.op(),invoke.varLoadOpFromFirstOperandOrNull())
+                )
+                .forEach(invokeVar ->{
+                    ceToInvokeVar.put(invokeVar.invokeOp,invokeVar);
+                    ceToInvokeVar.put(invokeVar.varLoadOp,invokeVar);
+                });
+
+        return Trxfmr.of(this,funcOp).transform(ceToInvokeVar::containsKey,(blockBuilder, op) -> {
+            CodeContext context = blockBuilder.context();
+            if (invoke(lookup(),op) instanceof Invoke invoke
+                    && ceToInvokeVar.get(invoke.op()) instanceof InvokeVar invokeVar) {
+                Op newOp = invoke.returnsVoid()
+                        ?
+                        // Code Model Pattern:
+                        //  %16 : java.type:"hat.types.Float4" = var.load %15 @loc="63:28";
+                        //  %17 : java.type:"float" = invoke %16 @loc="63:28" @java.ref:"hat.types.Float4::x():float";
+
+                        new HATVectorOp.HATVectorSelectStoreOp(
+                                invokeVar.name(),
+                                invokeVar.laneIdx(),
+                                invokeVar.varOpFromOperand(1),
+                                context.getValues(invokeVar.invokeOp.operands())
+                        )
+                        :
+                        // Pattern from the code mode:
+                        // %20 : java.type:"hat.types.Float4" = var.load %15 @loc="64:13";
+                        // %21 : java.type:"float" = var.load %19 @loc="64:18";
+                        // invoke %20 %21 @loc="64:13" @java.ref:"hat.types.Float4::x(float):void";
+                        new HATVectorOp.HATVectorSelectLoadOp(
+                                invokeVar.name(),
+                                invokeVar.returnType(),
+                                invokeVar.laneIdx(),
+                                context.getValues(invokeVar.invokeOp.operands())
+                        );
+
+                context.mapValue(invokeVar.invokeOp.result(), blockBuilder.op(
+                        copyLocation(invokeVar.invokeOp, newOp)));
+            } else if (op instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
+                context.mapValue(varLoadOp.result(), context.getValue(varLoadOp.operands().getFirst()));
+            }
+            return blockBuilder;
+        }).funcOp();
     }
 
 }

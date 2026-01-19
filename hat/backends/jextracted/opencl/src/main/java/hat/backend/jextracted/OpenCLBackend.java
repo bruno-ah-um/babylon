@@ -29,7 +29,9 @@ import hat.ComputeContext;
 import hat.Config;
 import hat.KernelContext;
 //import hat.backend.ffi.C99FFIBackend;
+import hat.backend.Backend;
 import hat.callgraph.KernelCallGraph;
+import optkl.codebuilders.ScopedCodeBuilderContext;
 
 import java.lang.foreign.Arena;
 import java.lang.invoke.MethodHandle;
@@ -61,14 +63,14 @@ public class OpenCLBackend extends C99JExtractedBackend {
     @Override
     public void computeContextHandoff(ComputeContext computeContext) {
         //System.out.println("OpenCL backend received computeContext");
-        injectBufferTracking(computeContext.computeEntrypoint());
+        computeContext.computeEntrypoint().funcOp(injectBufferTracking(config(),lookup(),computeContext.computeEntrypoint().funcOp()));
     }
 
     @Override
     public void dispatchKernel(KernelCallGraph kernelCallGraph, KernelContext kernelContext, Object... args) {
         //System.out.println("OpenCL backend dispatching kernel " + kernelCallGraph.entrypoint.method);
         CompiledKernel compiledKernel = kernelCallGraphCompiledCodeMap.computeIfAbsent(kernelCallGraph, (_) -> {
-            String code = createCode(kernelCallGraph, new OpenCLJExtractedHATKernelBuilder(), args);
+            String code = createCode(kernelCallGraph, new OpenCLJExtractedHATKernelBuilder(new ScopedCodeBuilderContext(kernelCallGraph.lookup(),kernelCallGraph.entrypoint.funcOp())), args);
             System.out.println(code);
             long programHandle = compileProgram(code);
             if (programOK(programHandle)) {

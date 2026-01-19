@@ -31,7 +31,8 @@ import hat.KernelContext;
 import hat.callgraph.KernelCallGraph;
 import jdk.incubator.code.CodeTransformer;
 import jdk.incubator.code.analysis.SSA;
-import optkl.Invoke;
+import optkl.Trxfmr;
+import optkl.codebuilders.ScopedCodeBuilderContext;
 import optkl.util.CallSite;
 import optkl.ifacemapper.Buffer;
 import optkl.ifacemapper.BoundSchema;
@@ -50,9 +51,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-
-import static optkl.Invoke.invokeOpHelper;
-import static optkl.OpTkl.transform;
+import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
+import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
 
 public class CudaBackend extends C99FFIBackend {
     final int major = 7;
@@ -372,7 +372,7 @@ public class CudaBackend extends C99FFIBackend {
     }
     @Override
     public void computeContextHandoff(ComputeContext computeContext) {
-        injectBufferTracking(computeContext.computeEntrypoint());
+        computeContext.computeEntrypoint().funcOp(injectBufferTracking(config(),lookup(),computeContext.computeEntrypoint().funcOp()));
     }
 
     @Override
@@ -393,7 +393,7 @@ public class CudaBackend extends C99FFIBackend {
         compiledKernel.dispatch(kernelContext, args);
     }
     String createC99(KernelCallGraph kernelCallGraph, Object... args){
-        return createCode(kernelCallGraph, new CudaHATKernelBuilder(), args);
+        return createCode(kernelCallGraph, new CudaHATKernelBuilder(new ScopedCodeBuilderContext(kernelCallGraph.lookup(),kernelCallGraph.entrypoint.funcOp())), args);
     }
 
     ///   Same as OpenCL backend until here
@@ -437,12 +437,11 @@ public class CudaBackend extends C99FFIBackend {
         return out.toString();
     }
 
-      static  public CoreOp.FuncOp transformPTXPtrs(MethodHandles.Lookup lookup,CoreOp.FuncOp func, HashMap<String, Object> argsMap, Set<String> usedMathFns) {
-        var here = CallSite.of(CudaBackend.class, "transformPTXPtrs");
-        return transform(here, func,_->true,(block, op) -> {
+      static  public CoreOp.FuncOp transformPTXPtrs(MethodHandles.Lookup lookup,CoreOp.FuncOp funcOp, HashMap<String, Object> argsMap, Set<String> usedMathFns) {
+        return Trxfmr.of(lookup,funcOp).transform(_->true,(block, op) -> {
             CodeContext cc = block.context();
             // use first operand of invoke to figure out schema
-            if (invokeOpHelper(lookup,op) instanceof Invoke invoke){
+            if (invoke(lookup,op) instanceof Invoke invoke){
                 if (invoke.isMappableIface()
                         && invoke.op().operands().getFirst() instanceof Op.Result invokeResult
                         && invokeResult.op().operands().getFirst() instanceof Op.Result varLoadResult
@@ -455,8 +454,7 @@ public class CudaBackend extends C99FFIBackend {
                     PTXPtrOp ptxOp = new PTXPtrOp(invoke.returnType(), invoke.name(), outputOperands, boundSchema);
                     Op.Result outputResult = block.op(ptxOp);
                     cc.mapValue(invoke.op().result(), outputResult);
-                } else if (invoke.refIs(Math.class)
-                        && mathFns.containsKey(invoke.name() + "_" + invoke.returnType().toString())){
+                } else if (invoke.refIs(Math.class) && mathFns.containsKey(invoke.name() + "_" + invoke.returnType().toString())){
                     usedMathFns.add(invoke.name() + "_" + invoke.returnType().toString());
                     block.op(op);
                 } else {
@@ -466,7 +464,7 @@ public class CudaBackend extends C99FFIBackend {
                 block.op(op);
             }
             return block;
-        });
+        }).funcOp();
     }
 
     static public String createFunction(MethodHandles.Lookup lookup,PTXHATKernelBuilder builder, CoreOp.FuncOp lowered, boolean entry) {

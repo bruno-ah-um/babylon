@@ -30,8 +30,8 @@ import hat.Config;
 import hat.KernelContext;
 import hat.types.BF16;
 import hat.types.F16;
+import jdk.incubator.code.CodeTransformer;
 import optkl.util.CallSite;
-import optkl.OpTkl;
 import hat.annotations.Kernel;
 import hat.annotations.Preformatted;
 import hat.annotations.TypeDef;
@@ -206,7 +206,6 @@ public abstract class C99FFIBackend extends FFIBackend  implements BufferTracker
     }
 
     public <T extends C99HATKernelBuilder<T>> String createCode(KernelCallGraph kernelCallGraph, T builder, Object... args) {
-        var here = CallSite.of(C99FFIBackend.class, "createCode");
         builder.defines().types();
         Set<Schema.IfaceType> already = new LinkedHashSet<>();
         Arrays.stream(args)
@@ -304,12 +303,12 @@ public abstract class C99FFIBackend extends FFIBackend  implements BufferTracker
             builder.nl().kernelEntrypoint(buildContext).nl();
 
             if (config().showKernelModel()) {
-                IO.println("Original");
+                IO.println("Non Lowered");
                 IO.println(kernelCallGraph.entrypoint.funcOp().toText());
             }
             if (config().showLoweredKernelModel()) {
                 IO.println("Lowered");
-                IO.println(OpTkl.lower(here, kernelCallGraph.entrypoint.funcOp()).toText());
+                IO.println(kernelCallGraph.entrypoint.funcOp().transform(CodeTransformer.LOWERING_TRANSFORMER).toText());
             }
         }
         return builder.toString();

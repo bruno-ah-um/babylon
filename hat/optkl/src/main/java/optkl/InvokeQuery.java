@@ -25,36 +25,35 @@
 package optkl;
 
 import jdk.incubator.code.CodeElement;
-import jdk.incubator.code.TypeElement;
-import jdk.incubator.code.dialect.core.CoreOp;
-import jdk.incubator.code.dialect.java.ClassType;
 import jdk.incubator.code.dialect.java.JavaOp;
-import jdk.incubator.code.dialect.java.JavaType;
-import jdk.incubator.code.dialect.java.PrimitiveType;
+import optkl.util.BiMap;
 
 import java.lang.invoke.MethodHandles;
-import java.lang.reflect.Field;
+import java.util.function.Predicate;
 
-import static optkl.OpTkl.classTypeToTypeOrThrow;
+import optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
 
-public interface VarAccess extends OpHelper<CoreOp.VarAccessOp>{
+public interface InvokeQuery extends Query<JavaOp.InvokeOp,Invoke,InvokeQuery> {
+    interface Match extends SimpleMatch<JavaOp.InvokeOp, Invoke, InvokeQuery> {
 
-    @Override
-    default  String name(){
-        return op().varOp().varName();
     }
-
-    default boolean isPrimitive(){
-        return op().result().type() instanceof PrimitiveType;
+    record Impl(MethodHandles.Lookup lookup) implements InvokeQuery {
+        @Override
+        public Res<JavaOp.InvokeOp,Invoke,InvokeQuery> matches(CodeElement<?, ?> ce, Predicate<Invoke> predicate) {
+            if (Invoke.invoke(lookup,ce) instanceof Invoke invoke && predicate.test(invoke)) {
+                record  MatchImpl (InvokeQuery query, Invoke helper) implements Match {
+                    @Override
+                    public SimpleMatch<JavaOp.InvokeOp,Invoke,InvokeQuery> remap(BiMap<CodeElement<?, ?>, CodeElement<?, ?>> biMap) {
+                        return  new MatchImpl(MatchImpl.this.query,Invoke.invoke(query().lookup(), biMap.getTo(MatchImpl.this.helper.op())));
+                    }
+                }
+                return new  MatchImpl(this,invoke);
+            } else {
+                return Query.FAILED;
+            }
+        }
     }
-
-
-    default  <T>boolean of(Class<T> clazz){
-        return isAssignable((JavaType) op().resultType(),clazz);
-    }
-
-    static VarAccess varAccessOpHelper(MethodHandles.Lookup lookup, CodeElement<?,?> codeElement){
-        record Impl(MethodHandles.Lookup lookup, CoreOp.VarAccessOp op) implements VarAccess {}
-        return codeElement instanceof CoreOp.VarAccessOp varAccessOp? new Impl(lookup,varAccessOp): null;
+    static InvokeQuery create(MethodHandles.Lookup lookup) {
+         return new Impl(lookup);
     }
 }

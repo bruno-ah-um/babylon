@@ -30,8 +30,6 @@ import hat.KernelContext;
 import hat.buffer.KernelBufferContext;
 import hat.codebuilders.C99HATKernelBuilder;
 import hat.buffer.ArgArray;
-import optkl.util.CallSite;
-import optkl.OpTkl;
 import optkl.ifacemapper.Buffer;
 import hat.callgraph.KernelCallGraph;
 import optkl.codebuilders.ScopedCodeBuilderContext;
@@ -80,8 +78,7 @@ public abstract class C99JExtractedBackend extends JExtractedBackend {
     public Map<KernelCallGraph, CompiledKernel> kernelCallGraphCompiledCodeMap = new HashMap<>();
 
     public <T extends C99HATKernelBuilder<T>> String createCode(KernelCallGraph kernelCallGraph, T builder, Object[] args) {
-        var here = CallSite.of(C99JExtractedBackend.class, "createCode");
-        builder.defines().types();
+         builder.defines().types();
         Set<Schema.IfaceType> already = new LinkedHashSet<>();
         Arrays.stream(args)
                 .filter(arg -> arg instanceof Buffer)
@@ -97,16 +94,7 @@ public abstract class C99JExtractedBackend extends JExtractedBackend {
                 });
         ScopedCodeBuilderContext buildContext = new ScopedCodeBuilderContext(kernelCallGraph.lookup()
                 ,kernelCallGraph.entrypoint.funcOp());
-        // Sorting by rank ensures we don't need forward declarations
-     //   kernelCallGraph.kernelReachableResolvedStream().sorted((lhs, rhs) -> rhs.rank - lhs.rank)
-       //         .forEach(kernelReachableResolvedMethod -> builder.nl().kernelMethod(buildContext,kernelReachableResolvedMethod.funcOp()).nl());
-
         builder.nl().kernelEntrypoint(buildContext).nl();
-
-        System.out.println("Original");
-        System.out.println(kernelCallGraph.entrypoint.funcOp().toText());
-        System.out.println("Lowered");
-        System.out.println(OpTkl.lower(here, kernelCallGraph.entrypoint.funcOp()).toText());
 
         return builder.toString();
     }

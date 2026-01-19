@@ -25,29 +25,33 @@
 package hat.codebuilders;
 
 import jdk.incubator.code.TypeElement;
-import optkl.OpTkl;
+import optkl.OpHelper;
 import optkl.codebuilders.ScopedCodeBuilderContext;
 
 
-public abstract class C99HATComputeBuilder<T extends C99HATComputeBuilder<T>> extends C99HATCodeBuilderContext<T> {
+public abstract class C99HATComputeBuilder<T extends C99HATComputeBuilder<T>> extends C99HATCodeBuilder<T> {
 
-    public T computeDeclaration(TypeElement typeElement, String name) {
+    protected C99HATComputeBuilder(ScopedCodeBuilderContext scopedCodeBuilderContext) {
+        super(scopedCodeBuilderContext);
+    }
+
+    public final T computeDeclaration(TypeElement typeElement, String name) {
         return typeName(typeElement.toString()).space().identifier(name);
     }
 
-    public T compute(ScopedCodeBuilderContext buildContext) {
-        computeDeclaration(buildContext.funcOp.resultType(), buildContext.funcOp.funcName());
+    public final  T compute() {
+        computeDeclaration(scopedCodeBuilderContext().funcOp().resultType(), scopedCodeBuilderContext().funcOp().funcName());
         parenNlIndented(_ ->
                 commaSpaceSeparated(
-                        buildContext.paramTable.list(),
-                        param -> declareParam(buildContext, param)
+                        scopedCodeBuilderContext().paramTable.list(),
+                        param -> declareParam( param)
                 )
         );
 
         braceNlIndented(_ ->
                 nlSeparated(
-                        OpTkl.statements(buildContext.funcOp.bodies().getFirst().entryBlock()),
-                        statement ->statement(buildContext,statement).nl()
+                        OpHelper.Statement.statements(scopedCodeBuilderContext().funcOp().bodies().getFirst().entryBlock()),
+                        statement ->statement(statement).nl()
                 )
         );
 
