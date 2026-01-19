@@ -32,7 +32,7 @@ public final class TosaTransformer {
      */
     public static <T> T execute(MethodHandles.Lookup lookup, Supplier<T> quotableLambda) {
         // Capture the lambda as a Quoted object
-        Quoted quoted = Op.ofQuotable(quotableLambda).orElseThrow(() ->
+        Quoted<JavaOp.LambdaOp> quoted = Op.ofLambda(quotableLambda).orElseThrow(() ->
             new IllegalArgumentException("Lambda is not quotable - ensure @Reflect annotation is present")
         );
 
@@ -59,7 +59,7 @@ public final class TosaTransformer {
      * @param quoted The quoted code representation
      * @return Information about the transformation (to be defined)
      */
-    public static String analyzeQuoted(Quoted quoted) {
+    public static String analyzeQuoted(Quoted<?> quoted) {
         Op op = quoted.op();
 
         StringBuilder analysis = new StringBuilder();
@@ -85,7 +85,7 @@ public final class TosaTransformer {
      * 4. Add TOSA operations (tosa.add, tosa.mul)
      * 5. Compile and execute
      */
-    public static void transformToMlirTosa(Quoted quoted) {
+    public static void transformToMlirTosa(Quoted<?> quoted) {
         throw new UnsupportedOperationException(
             "Full MLIR TOSA transformation not yet implemented. " +
             "This will analyze the Quoted operation tree and generate MLIR code. " +
