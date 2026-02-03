@@ -2,6 +2,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -10,6 +11,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/ArrayRef.h"
 #include <cfloat>
 #include <string>
 #include <vector>
@@ -473,6 +475,220 @@ MLIRValueHandle mlir_tosa_tanh(MLIRFunctionHandle function,
     auto loc = UnknownLoc::get(function->context);
     auto tanhOp = function->builder.create<tosa::TanhOp>(loc, resultType->type, input->value);
     return new struct MLIRValue_(tanhOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_conv2d(MLIRFunctionHandle function,
+                                  MLIRValueHandle input,
+                                  MLIRValueHandle weight,
+                                  MLIRValueHandle bias,
+                                  const int64_t* pad,
+                                  const int64_t* stride,
+                                  const int64_t* dilation,
+                                  MLIRTypeHandle resultType) {
+    if (!function || !input || !weight || !bias || !pad || !stride || !dilation || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    // Create dense arrays for pad, stride, dilation
+    auto padAttr = function->builder.getDenseI64ArrayAttr({pad[0], pad[1], pad[2], pad[3]});
+    auto strideAttr = function->builder.getDenseI64ArrayAttr({stride[0], stride[1]});
+    auto dilationAttr = function->builder.getDenseI64ArrayAttr({dilation[0], dilation[1]});
+
+    // Conv2D requires bias to be 1D tensor [OC]. If bias is multi-dimensional,
+    // we need to reshape it to 1D first.
+    mlir::Value biasValue = bias->value;
+    auto biasType = mlir::dyn_cast<mlir::RankedTensorType>(biasValue.getType());
+    if (biasType && biasType.getRank() > 1) {
+        // Create 1D dynamic tensor type for bias
+        auto elementType = biasType.getElementType();
+        auto bias1DType = mlir::RankedTensorType::get({mlir::ShapedType::kDynamic}, elementType);
+
+        // Create new_shape attribute for reshape: [-1] to flatten to 1D
+        auto newShapeAttr = function->builder.getDenseI64ArrayAttr({-1});
+
+        auto reshapeOp = function->builder.create<tosa::ReshapeOp>(
+            loc, bias1DType, biasValue, newShapeAttr);
+        biasValue = reshapeOp.getResult();
+    }
+
+    auto conv2dOp = function->builder.create<tosa::Conv2DOp>(
+        loc, resultType->type,
+        input->value, weight->value, biasValue,
+        padAttr, strideAttr, dilationAttr);
+
+    return new struct MLIRValue_(conv2dOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_max_pool2d(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      const int64_t* kernel,
+                                      const int64_t* stride,
+                                      const int64_t* pad,
+                                      MLIRTypeHandle resultType) {
+    if (!function || !input || !kernel || !stride || !pad || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    // Create dense arrays for kernel, stride, pad
+    auto kernelAttr = function->builder.getDenseI64ArrayAttr({kernel[0], kernel[1]});
+    auto strideAttr = function->builder.getDenseI64ArrayAttr({stride[0], stride[1]});
+    auto padAttr = function->builder.getDenseI64ArrayAttr({pad[0], pad[1], pad[2], pad[3]});
+
+    auto maxPool2dOp = function->builder.create<tosa::MaxPool2dOp>(
+        loc, resultType->type,
+        input->value,
+        kernelAttr, strideAttr, padAttr);
+
+    return new struct MLIRValue_(maxPool2dOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_avg_pool2d(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      const int64_t* kernel,
+                                      const int64_t* stride,
+                                      const int64_t* pad,
+                                      MLIRTypeHandle resultType) {
+    if (!function || !input || !kernel || !stride || !pad || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    // Create dense arrays for kernel, stride, pad
+    auto kernelAttr = function->builder.getDenseI64ArrayAttr({kernel[0], kernel[1]});
+    auto strideAttr = function->builder.getDenseI64ArrayAttr({stride[0], stride[1]});
+    auto padAttr = function->builder.getDenseI64ArrayAttr({pad[0], pad[1], pad[2], pad[3]});
+
+    // AvgPool2d requires acc_type attribute - use TypeAttr::get
+    auto accType = TypeAttr::get(function->builder.getF32Type());
+
+    auto avgPool2dOp = function->builder.create<tosa::AvgPool2dOp>(
+        loc, resultType->type,
+        input->value,
+        kernelAttr, strideAttr, padAttr,
+        accType);
+
+    return new struct MLIRValue_(avgPool2dOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_reshape(MLIRFunctionHandle function,
+                                   MLIRValueHandle input,
+                                   const int64_t* newShape,
+                                   size_t numDims,
+                                   MLIRTypeHandle resultType) {
+    if (!function || !input || !newShape || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    // Create new_shape attribute
+    std::vector<int64_t> shapeVec(newShape, newShape + numDims);
+    auto newShapeAttr = function->builder.getDenseI64ArrayAttr(shapeVec);
+
+    auto reshapeOp = function->builder.create<tosa::ReshapeOp>(
+        loc, resultType->type,
+        input->value,
+        newShapeAttr);
+
+    return new struct MLIRValue_(reshapeOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_reduce_sum(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      int64_t axis,
+                                      MLIRTypeHandle resultType) {
+    if (!function || !input || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    auto axisAttr = function->builder.getI32IntegerAttr(axis);
+
+    auto reduceSumOp = function->builder.create<tosa::ReduceSumOp>(
+        loc, resultType->type,
+        input->value,
+        axisAttr);
+
+    return new struct MLIRValue_(reduceSumOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_reduce_max(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      int64_t axis,
+                                      MLIRTypeHandle resultType) {
+    if (!function || !input || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    auto axisAttr = function->builder.getI32IntegerAttr(axis);
+
+    auto reduceMaxOp = function->builder.create<tosa::ReduceMaxOp>(
+        loc, resultType->type,
+        input->value,
+        axisAttr);
+
+    return new struct MLIRValue_(reduceMaxOp.getResult());
+}
+
+MLIRValueHandle mlir_tosa_const_f32(MLIRFunctionHandle function,
+                                     const float* data,
+                                     size_t numElements,
+                                     const int64_t* shape,
+                                     size_t numDims,
+                                     MLIRTypeHandle resultType) {
+    if (!function || !data || !resultType) {
+        setError("Invalid parameter");
+        return nullptr;
+    }
+
+    if (numDims > 0 && !shape) {
+        setError("Shape is required for non-scalar tensors");
+        return nullptr;
+    }
+
+    // Validate that numElements matches the product of shape dimensions
+    size_t expectedElements = 1;
+    for (size_t i = 0; i < numDims; i++) {
+        expectedElements *= shape[i];
+    }
+    if (expectedElements != numElements) {
+        setError("Number of elements does not match shape dimensions");
+        return nullptr;
+    }
+
+    auto loc = UnknownLoc::get(function->context);
+
+    // Get the tensor type from the provided result type
+    auto tensorType = mlir::dyn_cast<RankedTensorType>(resultType->type);
+    if (!tensorType) {
+        setError("Result type must be a ranked tensor type");
+        return nullptr;
+    }
+
+    // Create a vector from the input data
+    std::vector<float> dataVec(data, data + numElements);
+
+    // Create DenseElementsAttr from the float data
+    auto denseAttr = DenseElementsAttr::get(tensorType, llvm::ArrayRef(dataVec));
+
+    // Create tosa.const operation
+    auto constOp = function->builder.create<tosa::ConstOp>(loc, tensorType, denseAttr);
+
+    return new struct MLIRValue_(constOp.getResult());
 }
 
 /* Function finalization */

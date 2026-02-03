@@ -618,6 +618,7 @@ public final class TosaRuntime {
     /**
      * Execute TOSA MatMul operation
      * For 2D tensors: [M, K] @ [K, N] -> [M, N]
+     * For 3D tensors (batched): [B, M, K] @ [B, K, N] -> [B, M, N]
      */
     @SuppressWarnings("unchecked")
     private <T> Tensor<T> executeMatMul(Tensor<T> input1, Tensor<T> input2) {
@@ -625,12 +626,32 @@ public final class TosaRuntime {
         long[] shape1 = input1.shape();
         long[] shape2 = input2.shape();
 
-        if (shape1.length != 2 || shape2.length != 2) {
+        if (shape1.length != shape2.length) {
             throw new IllegalArgumentException(
-                "MatMul requires 2D tensors, got shapes: " +
+                "MatMul requires tensors of the same rank, got shapes: " +
                 java.util.Arrays.toString(shape1) + " and " + java.util.Arrays.toString(shape2)
             );
         }
+
+        if (shape1.length == 2) {
+            return executeMatMul2D(input1, input2);
+        } else if (shape1.length == 3) {
+            return executeMatMul3D(input1, input2);
+        } else {
+            throw new IllegalArgumentException(
+                "MatMul requires 2D or 3D tensors, got shapes: " +
+                java.util.Arrays.toString(shape1) + " and " + java.util.Arrays.toString(shape2)
+            );
+        }
+    }
+
+    /**
+     * Execute 2D MatMul: [M, K] @ [K, N] -> [M, N]
+     */
+    @SuppressWarnings("unchecked")
+    private <T> Tensor<T> executeMatMul2D(Tensor<T> input1, Tensor<T> input2) {
+        long[] shape1 = input1.shape();
+        long[] shape2 = input2.shape();
 
         long M = shape1[0];
         long K1 = shape1[1];
@@ -649,7 +670,6 @@ public final class TosaRuntime {
             );
         }
 
-        // Compute MatMul: result[m, n] = sum_k(input1[m, k] * input2[k, n])
         Arena resultArena = Arena.ofAuto();
         Tensor.ElementType type = input1.elementType();
         long[] resultShape = new long[]{M, N};
@@ -694,6 +714,97 @@ public final class TosaRuntime {
                             sum += v1 * v2;
                         }
                         resultData.setAtIndex(ValueLayout.JAVA_LONG, resultIdx, sum);
+                    }
+                }
+            }
+        }
+
+        return Tensor.ofRaw(resultArena, resultShape, type, resultData);
+    }
+
+    /**
+     * Execute 3D batched MatMul: [B, M, K] @ [B, K, N] -> [B, M, N]
+     */
+    @SuppressWarnings("unchecked")
+    private <T> Tensor<T> executeMatMul3D(Tensor<T> input1, Tensor<T> input2) {
+        long[] shape1 = input1.shape();
+        long[] shape2 = input2.shape();
+
+        long B1 = shape1[0];
+        long M = shape1[1];
+        long K1 = shape1[2];
+        long B2 = shape2[0];
+        long K2 = shape2[1];
+        long N = shape2[2];
+
+        if (B1 != B2) {
+            throw new IllegalArgumentException(
+                "MatMul batch dimensions must match: " + B1 + " vs " + B2
+            );
+        }
+
+        if (K1 != K2) {
+            throw new IllegalArgumentException(
+                "MatMul inner dimensions must match: [" + B1 + ", " + M + ", " + K1 + "] @ [" + B2 + ", " + K2 + ", " + N + "]"
+            );
+        }
+
+        if (input1.elementType() != input2.elementType()) {
+            throw new IllegalArgumentException(
+                "Element type mismatch: " + input1.elementType() + " vs " + input2.elementType()
+            );
+        }
+
+        Arena resultArena = Arena.ofAuto();
+        Tensor.ElementType type = input1.elementType();
+        long[] resultShape = new long[]{B1, M, N};
+        MemorySegment resultData = resultArena.allocate(type.valueLayout(), B1 * M * N);
+
+        for (long b = 0; b < B1; b++) {
+            long input1BatchOffset = b * M * K1;
+            long input2BatchOffset = b * K2 * N;
+            long resultBatchOffset = b * M * N;
+
+            for (long m = 0; m < M; m++) {
+                for (long n = 0; n < N; n++) {
+                    long resultIdx = resultBatchOffset + m * N + n;
+                    switch (type) {
+                        case FLOAT32 -> {
+                            float sum = 0.0f;
+                            for (long k = 0; k < K1; k++) {
+                                float v1 = input1.data().getAtIndex(ValueLayout.JAVA_FLOAT, input1BatchOffset + m * K1 + k);
+                                float v2 = input2.data().getAtIndex(ValueLayout.JAVA_FLOAT, input2BatchOffset + k * N + n);
+                                sum += v1 * v2;
+                            }
+                            resultData.setAtIndex(ValueLayout.JAVA_FLOAT, resultIdx, sum);
+                        }
+                        case FLOAT64 -> {
+                            double sum = 0.0;
+                            for (long k = 0; k < K1; k++) {
+                                double v1 = input1.data().getAtIndex(ValueLayout.JAVA_DOUBLE, input1BatchOffset + m * K1 + k);
+                                double v2 = input2.data().getAtIndex(ValueLayout.JAVA_DOUBLE, input2BatchOffset + k * N + n);
+                                sum += v1 * v2;
+                            }
+                            resultData.setAtIndex(ValueLayout.JAVA_DOUBLE, resultIdx, sum);
+                        }
+                        case INT32 -> {
+                            int sum = 0;
+                            for (long k = 0; k < K1; k++) {
+                                int v1 = input1.data().getAtIndex(ValueLayout.JAVA_INT, (int)(input1BatchOffset + m * K1 + k));
+                                int v2 = input2.data().getAtIndex(ValueLayout.JAVA_INT, (int)(input2BatchOffset + k * N + n));
+                                sum += v1 * v2;
+                            }
+                            resultData.setAtIndex(ValueLayout.JAVA_INT, resultIdx, sum);
+                        }
+                        case INT64 -> {
+                            long sum = 0;
+                            for (long k = 0; k < K1; k++) {
+                                long v1 = input1.data().getAtIndex(ValueLayout.JAVA_LONG, input1BatchOffset + m * K1 + k);
+                                long v2 = input2.data().getAtIndex(ValueLayout.JAVA_LONG, input2BatchOffset + k * N + n);
+                                sum += v1 * v2;
+                            }
+                            resultData.setAtIndex(ValueLayout.JAVA_LONG, resultIdx, sum);
+                        }
                     }
                 }
             }

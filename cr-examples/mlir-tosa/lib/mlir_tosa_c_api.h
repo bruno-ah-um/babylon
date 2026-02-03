@@ -111,6 +111,133 @@ MLIRValueHandle mlir_tosa_tanh(MLIRFunctionHandle function,
                                MLIRValueHandle input,
                                MLIRTypeHandle resultType);
 
+/**
+ * TOSA Conv2D operation.
+ * Performs 2D convolution over the input tensor using the weight tensor.
+ *
+ * @param function Function handle
+ * @param input Input tensor [N, H, W, C] (NHWC format)
+ * @param weight Weight tensor [OC, KH, KW, IC] (OHWI format)
+ * @param bias Bias tensor [OC]
+ * @param pad Padding [top, bottom, left, right] (4 values)
+ * @param stride Stride [height, width] (2 values)
+ * @param dilation Dilation [height, width] (2 values)
+ * @param resultType Result tensor type
+ * @return Result value handle
+ */
+MLIRValueHandle mlir_tosa_conv2d(MLIRFunctionHandle function,
+                                  MLIRValueHandle input,
+                                  MLIRValueHandle weight,
+                                  MLIRValueHandle bias,
+                                  const int64_t* pad,
+                                  const int64_t* stride,
+                                  const int64_t* dilation,
+                                  MLIRTypeHandle resultType);
+
+/**
+ * TOSA MaxPool2D operation.
+ * Performs max pooling over the input tensor.
+ *
+ * @param function Function handle
+ * @param input Input tensor [N, H, W, C] (NHWC format)
+ * @param kernel Kernel size [height, width] (2 values)
+ * @param stride Stride [height, width] (2 values)
+ * @param pad Padding [top, bottom, left, right] (4 values)
+ * @param resultType Result tensor type
+ * @return Result value handle
+ */
+MLIRValueHandle mlir_tosa_max_pool2d(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      const int64_t* kernel,
+                                      const int64_t* stride,
+                                      const int64_t* pad,
+                                      MLIRTypeHandle resultType);
+
+/**
+ * TOSA AvgPool2D operation.
+ * Performs average pooling over the input tensor.
+ *
+ * @param function Function handle
+ * @param input Input tensor [N, H, W, C] (NHWC format)
+ * @param kernel Kernel size [height, width] (2 values)
+ * @param stride Stride [height, width] (2 values)
+ * @param pad Padding [top, bottom, left, right] (4 values)
+ * @param resultType Result tensor type
+ * @return Result value handle
+ */
+MLIRValueHandle mlir_tosa_avg_pool2d(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      const int64_t* kernel,
+                                      const int64_t* stride,
+                                      const int64_t* pad,
+                                      MLIRTypeHandle resultType);
+
+/**
+ * TOSA Reshape operation.
+ * Reshapes the input tensor to the specified shape.
+ *
+ * @param function Function handle
+ * @param input Input tensor
+ * @param newShape Array of new shape dimensions
+ * @param numDims Number of dimensions in new shape
+ * @param resultType Result tensor type
+ * @return Result value handle
+ */
+MLIRValueHandle mlir_tosa_reshape(MLIRFunctionHandle function,
+                                   MLIRValueHandle input,
+                                   const int64_t* newShape,
+                                   size_t numDims,
+                                   MLIRTypeHandle resultType);
+
+/**
+ * TOSA Reduce Sum operation.
+ * Reduces the input tensor along the specified axis using sum.
+ *
+ * @param function Function handle
+ * @param input Input tensor
+ * @param axis Axis to reduce along
+ * @param resultType Result tensor type
+ * @return Result value handle
+ */
+MLIRValueHandle mlir_tosa_reduce_sum(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      int64_t axis,
+                                      MLIRTypeHandle resultType);
+
+/**
+ * TOSA Reduce Max operation.
+ * Reduces the input tensor along the specified axis using max.
+ *
+ * @param function Function handle
+ * @param input Input tensor
+ * @param axis Axis to reduce along
+ * @param resultType Result tensor type
+ * @return Result value handle
+ */
+MLIRValueHandle mlir_tosa_reduce_max(MLIRFunctionHandle function,
+                                      MLIRValueHandle input,
+                                      int64_t axis,
+                                      MLIRTypeHandle resultType);
+
+/**
+ * TOSA Const operation.
+ * Creates a constant tensor with embedded float32 data.
+ *
+ * @param function Function handle
+ * @param data Raw float32 data array
+ * @param numElements Number of elements in data array
+ * @param shape Tensor shape dimensions
+ * @param numDims Number of dimensions in shape
+ * @param resultType Result tensor type (must match shape and f32 element type)
+ * @return Value handle for the constant tensor
+ */
+MLIRValueHandle mlir_tosa_const_f32(MLIRFunctionHandle function,
+                                     const float* data,
+                                     size_t numElements,
+                                     const int64_t* shape,
+                                     size_t numDims,
+                                     MLIRTypeHandle resultType);
+
 /* Function finalization */
 MLIRResultCode mlir_function_add_return(MLIRFunctionHandle function,
                                         MLIRValueHandle* values,

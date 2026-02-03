@@ -13,9 +13,11 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SequencedMap;
 
 /**
  * Generates TOSA/MLIR code from Java code reflection models using native MLIR bindings.
@@ -45,12 +47,63 @@ public final class TosaCodeGenerator {
 
     /**
      * Generate TOSA MLIR code from a FuncOp.
+     * Defaults to 1D dynamic tensors.
      *
      * @param funcOp The function operation from code reflection
      * @param funcName The name to use for the generated function
      * @return TOSA MLIR code as a string
      */
     public static String generateTosa(CoreOp.FuncOp funcOp, String funcName) {
+        return generateTosa(funcOp, funcName, 1);
+    }
+
+    /**
+     * Generate TOSA MLIR code from a FuncOp with specified tensor rank.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param tensorRank The rank of tensors (1=1D, 2=2D, etc.)
+     * @return TOSA MLIR code as a string
+     */
+    public static String generateTosa(CoreOp.FuncOp funcOp, String funcName, int tensorRank) {
+        return generateTosa(funcOp, funcName, tensorRank, null);
+    }
+
+    /**
+     * Generate TOSA MLIR code from a FuncOp with static shapes.
+     * This enables native compilation of operations like Conv2D that require
+     * at least partially static shapes for lowering.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param paramShapes Array of shapes for each parameter (null entries use dynamic shapes)
+     * @return TOSA MLIR code as a string
+     */
+    public static String generateTosa(CoreOp.FuncOp funcOp, String funcName, long[][] paramShapes) {
+        // Determine tensor rank from the first non-null shape
+        int tensorRank = 4; // Default to 4D
+        for (long[] shape : paramShapes) {
+            if (shape != null) {
+                tensorRank = shape.length;
+                break;
+            }
+        }
+        return generateTosa(funcOp, funcName, tensorRank, paramShapes);
+    }
+
+    /**
+     * Generate TOSA MLIR code from a FuncOp with embedded weights.
+     * This method is used when exporting trained models with weights.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param weights Map of field name to WeightInfo for embedding constants
+     * @param modelInstance The model instance for resolving field accesses
+     * @return TOSA MLIR code as a string with embedded weight constants
+     */
+    public static String generateTosaWithWeights(CoreOp.FuncOp funcOp, String funcName,
+                                                   SequencedMap<String, TosaModelExporter.WeightInfo> weights,
+                                                   Object modelInstance) {
         try (Arena arena = Arena.ofConfined()) {
             // Create MLIR context and module
             MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
@@ -65,20 +118,260 @@ public final class TosaCodeGenerator {
             }
 
             try {
-                GeneratorContext ctx = new GeneratorContext(arena, context);
+                // Default to 4D tensors for CNN models
+                int tensorRank = 4;
+                GeneratorContext ctx = new GeneratorContext(arena, context, tensorRank, null, weights, modelInstance);
+
+                // Get function parameters - filter out weight parameters (they become constants)
+                List<Block.Parameter> params = funcOp.body().entryBlock().parameters();
+
+                // Create input types for Tensor parameters only
+                // Skip non-Tensor parameters (like 'this' for instance methods)
+                List<MemorySegment> inputTypes = new ArrayList<>();
+                List<Block.Parameter> inputParams = new ArrayList<>();
+                for (Block.Parameter param : params) {
+                    String typeStr = param.type().toString();
+                    // Skip non-Tensor parameters
+                    if (!typeStr.contains("Tensor")) {
+                        continue;
+                    }
+                    MemorySegment tosaType = javaTypeToNativeTosaType(ctx, param.type(), ctx.tensorRank);
+                    inputTypes.add(tosaType);
+                    inputParams.add(param);
+                }
+
+                // Create output type
+                MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType(), tensorRank);
+
+                // Allocate arrays for input/output types
+                MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
+                for (int i = 0; i < inputTypes.size(); i++) {
+                    inputTypesArray.setAtIndex(ValueLayout.ADDRESS, i, inputTypes.get(i));
+                }
+
+                MemorySegment outputTypesArray = arena.allocate(ValueLayout.ADDRESS, 1);
+                outputTypesArray.setAtIndex(ValueLayout.ADDRESS, 0, outputType);
+
+                // Create function name as native string
+                MemorySegment funcNameNative = arena.allocateFrom(funcName);
+
+                // Create the function
+                MemorySegment function = mlir_tosa_c_api_h.mlir_function_create(
+                    module,
+                    funcNameNative,
+                    inputTypesArray,
+                    inputTypes.size(),
+                    outputTypesArray,
+                    1
+                );
+
+                if (function.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to create MLIR function: " + getLastError());
+                }
+
+                // Map function arguments to values
+                for (int i = 0; i < inputParams.size(); i++) {
+                    MemorySegment arg = mlir_tosa_c_api_h.mlir_function_get_argument(function, i);
+                    ctx.valueHandles.put(inputParams.get(i), arg);
+                }
+
+                // Process the function body
+                Block entryBlock = funcOp.body().entryBlock();
+                for (Op op : entryBlock.ops()) {
+                    processOpWithWeights(op, ctx, function);
+                }
+
+                // Verify the module
+                int verifyResult = mlir_tosa_c_api_h.mlir_module_verify(module);
+                if (verifyResult != 0) {
+                    throw new RuntimeException("MLIR module verification failed: " + getLastError());
+                }
+
+                // Convert to string
+                MemorySegment strPtr = mlir_tosa_c_api_h.mlir_module_to_string(module);
+                if (strPtr.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to convert module to string: " + getLastError());
+                }
+
+                String result = strPtr.reinterpret(Long.MAX_VALUE).getString(0);
+                mlir_tosa_c_api_h.mlir_string_destroy(strPtr);
+
+                return result;
+            } finally {
+                mlir_tosa_c_api_h.mlir_module_destroy(module);
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+            }
+        }
+    }
+
+    /**
+     * Generate TOSA MLIR code from a FuncOp with embedded weights and static shapes.
+     * This version supports native compilation by using static tensor shapes.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param weights Map of field name to WeightInfo for embedding constants
+     * @param modelInstance The model instance for resolving field accesses
+     * @param inputShape Static shape for the input tensor (e.g., [1, 28, 28, 1] for MNIST)
+     * @return TOSA MLIR code as a string with embedded weight constants and static shapes
+     */
+    public static String generateTosaWithWeights(CoreOp.FuncOp funcOp, String funcName,
+                                                   SequencedMap<String, TosaModelExporter.WeightInfo> weights,
+                                                   Object modelInstance,
+                                                   long[] inputShape) {
+        try (Arena arena = Arena.ofConfined()) {
+            // Create MLIR context and module
+            MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
+            if (context.equals(MemorySegment.NULL)) {
+                throw new RuntimeException("Failed to create MLIR context: " + getLastError());
+            }
+
+            MemorySegment module = mlir_tosa_c_api_h.mlir_module_create(context);
+            if (module.equals(MemorySegment.NULL)) {
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+                throw new RuntimeException("Failed to create MLIR module: " + getLastError());
+            }
+
+            try {
+                int tensorRank = inputShape.length;
+                GeneratorContext ctx = new GeneratorContext(arena, context, tensorRank, null, weights, modelInstance);
+
+                // Get function parameters - filter to only Tensor parameters
+                List<Block.Parameter> params = funcOp.body().entryBlock().parameters();
+
+                // Create input types with static shapes (only for Tensor parameters)
+                List<MemorySegment> inputTypes = new ArrayList<>();
+                List<Block.Parameter> inputParams = new ArrayList<>();
+                int tensorParamIndex = 0;
+                for (Block.Parameter param : params) {
+                    String typeStr = param.type().toString();
+                    // Skip non-Tensor parameters (like 'this' for instance methods)
+                    if (!typeStr.contains("Tensor")) {
+                        continue;
+                    }
+
+                    MemorySegment tosaType;
+                    // Apply static shape to the first tensor parameter (the input)
+                    if (tensorParamIndex == 0 && inputShape != null) {
+                        tosaType = javaTypeToNativeTosaTypeStatic(ctx, param.type(), inputShape);
+                    } else {
+                        tosaType = javaTypeToNativeTosaType(ctx, param.type(), tensorRank);
+                    }
+                    inputTypes.add(tosaType);
+                    inputParams.add(param);
+                    tensorParamIndex++;
+                }
+
+                // Create output type (dynamic - MLIR will infer it)
+                MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType(), tensorRank);
+
+                // Allocate arrays for input/output types
+                MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
+                for (int i = 0; i < inputTypes.size(); i++) {
+                    inputTypesArray.setAtIndex(ValueLayout.ADDRESS, i, inputTypes.get(i));
+                }
+
+                MemorySegment outputTypesArray = arena.allocate(ValueLayout.ADDRESS, 1);
+                outputTypesArray.setAtIndex(ValueLayout.ADDRESS, 0, outputType);
+
+                // Create function name as native string
+                MemorySegment funcNameNative = arena.allocateFrom(funcName);
+
+                // Create the function
+                MemorySegment function = mlir_tosa_c_api_h.mlir_function_create(
+                    module,
+                    funcNameNative,
+                    inputTypesArray,
+                    inputTypes.size(),
+                    outputTypesArray,
+                    1
+                );
+
+                if (function.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to create MLIR function: " + getLastError());
+                }
+
+                // Map function arguments to values
+                for (int i = 0; i < inputParams.size(); i++) {
+                    MemorySegment arg = mlir_tosa_c_api_h.mlir_function_get_argument(function, i);
+                    ctx.valueHandles.put(inputParams.get(i), arg);
+                }
+
+                // Process the function body
+                Block entryBlock = funcOp.body().entryBlock();
+                for (Op op : entryBlock.ops()) {
+                    processOpWithWeights(op, ctx, function);
+                }
+
+                // Verify the module
+                int verifyResult = mlir_tosa_c_api_h.mlir_module_verify(module);
+                if (verifyResult != 0) {
+                    throw new RuntimeException("MLIR module verification failed: " + getLastError());
+                }
+
+                // Convert to string
+                MemorySegment strPtr = mlir_tosa_c_api_h.mlir_module_to_string(module);
+                if (strPtr.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to convert module to string: " + getLastError());
+                }
+
+                String result = strPtr.reinterpret(Long.MAX_VALUE).getString(0);
+                mlir_tosa_c_api_h.mlir_string_destroy(strPtr);
+
+                return result;
+            } finally {
+                mlir_tosa_c_api_h.mlir_module_destroy(module);
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+            }
+        }
+    }
+
+    /**
+     * Generate TOSA MLIR code from a FuncOp with specified tensor rank and optional static shapes.
+     *
+     * @param funcOp The function operation from code reflection
+     * @param funcName The name to use for the generated function
+     * @param tensorRank The rank of tensors (1=1D, 2=2D, etc.)
+     * @param paramShapes Optional array of shapes for each parameter (null for dynamic shapes)
+     * @return TOSA MLIR code as a string
+     */
+    private static String generateTosa(CoreOp.FuncOp funcOp, String funcName, int tensorRank, long[][] paramShapes) {
+        try (Arena arena = Arena.ofConfined()) {
+            // Create MLIR context and module
+            MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
+            if (context.equals(MemorySegment.NULL)) {
+                throw new RuntimeException("Failed to create MLIR context: " + getLastError());
+            }
+
+            MemorySegment module = mlir_tosa_c_api_h.mlir_module_create(context);
+            if (module.equals(MemorySegment.NULL)) {
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+                throw new RuntimeException("Failed to create MLIR module: " + getLastError());
+            }
+
+            try {
+                GeneratorContext ctx = new GeneratorContext(arena, context, tensorRank, paramShapes);
 
                 // Get function parameters
                 List<Block.Parameter> params = funcOp.body().entryBlock().parameters();
 
-                // Create input types
+                // Create input types - use static shapes if provided, otherwise dynamic
                 List<MemorySegment> inputTypes = new ArrayList<>();
-                for (Block.Parameter param : params) {
-                    MemorySegment tosaType = javaTypeToNativeTosaType(ctx, param.type());
+                for (int i = 0; i < params.size(); i++) {
+                    Block.Parameter param = params.get(i);
+                    long[] shape = (paramShapes != null && i < paramShapes.length) ? paramShapes[i] : null;
+                    MemorySegment tosaType;
+                    if (shape != null) {
+                        tosaType = javaTypeToNativeTosaTypeStatic(ctx, param.type(), shape);
+                    } else {
+                        tosaType = javaTypeToNativeTosaType(ctx, param.type(), ctx.tensorRank);
+                    }
                     inputTypes.add(tosaType);
                 }
 
-                // Create output type
-                MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType());
+                // Create output type - infer from input shapes if possible, otherwise use dynamic
+                // For Conv2D: output shape depends on input, kernel, padding, stride
+                MemorySegment outputType = inferOutputType(ctx, funcOp, paramShapes);
 
                 // Allocate arrays for input/output types
                 MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
@@ -162,7 +455,7 @@ public final class TosaCodeGenerator {
             }
 
             try {
-                GeneratorContext ctx = new GeneratorContext(arena, context);
+                GeneratorContext ctx = new GeneratorContext(arena, context, 1); // Default to 1D tensors
                 buildFunction(funcOp, funcName, module, ctx, arena);
 
                 // Write to file
@@ -199,7 +492,7 @@ public final class TosaCodeGenerator {
             }
 
             try {
-                GeneratorContext ctx = new GeneratorContext(arena, context);
+                GeneratorContext ctx = new GeneratorContext(arena, context, 1); // Default to 1D tensors
                 buildFunction(funcOp, funcName, module, ctx, arena);
 
                 // Write bytecode to file
@@ -222,15 +515,15 @@ public final class TosaCodeGenerator {
                                        MemorySegment module, GeneratorContext ctx, Arena arena) {
         List<Block.Parameter> params = funcOp.body().entryBlock().parameters();
 
-        // Create input types
+        // Create input types with the correct tensor rank
         List<MemorySegment> inputTypes = new ArrayList<>();
         for (Block.Parameter param : params) {
-            MemorySegment tosaType = javaTypeToNativeTosaType(ctx, param.type());
+            MemorySegment tosaType = javaTypeToNativeTosaType(ctx, param.type(), ctx.tensorRank);
             inputTypes.add(tosaType);
         }
 
-        // Create output type
-        MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType());
+        // Create output type with the correct tensor rank
+        MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType(), ctx.tensorRank);
 
         // Allocate arrays for input/output types
         MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
@@ -319,6 +612,95 @@ public final class TosaCodeGenerator {
     }
 
     /**
+     * Process a single operation from the code model, with support for weight injection.
+     * This handles FieldLoadOp to inject constant tensors for model weights.
+     */
+    private static MemorySegment processOpWithWeights(Op op, GeneratorContext ctx, MemorySegment function) {
+        return switch (op) {
+            case CoreOp.VarOp varOp -> {
+                // Variable declarations - map the var to the input value
+                Value inputValue = varOp.operands().getFirst();
+                MemorySegment handle = ctx.valueHandles.get(inputValue);
+                if (handle != null) {
+                    ctx.varToHandle.put(varOp.result(), handle);
+                }
+                yield MemorySegment.NULL;
+            }
+            case CoreOp.VarAccessOp.VarLoadOp loadOp -> {
+                // Variable loads - look up the actual value
+                Value varValue = loadOp.operands().getFirst();
+                MemorySegment handle = ctx.varToHandle.get(varValue);
+                if (handle != null) {
+                    ctx.valueHandles.put(loadOp.result(), handle);
+                }
+                yield MemorySegment.NULL;
+            }
+            case JavaOp.FieldAccessOp.FieldLoadOp flo -> {
+                // Field loads - check if this is a weight tensor field
+                String fieldName = flo.fieldDescriptor().name();
+                if (ctx.weights != null && ctx.weights.containsKey(fieldName)) {
+                    TosaModelExporter.WeightInfo weight = ctx.weights.get(fieldName);
+                    MemorySegment constValue = createConstantTensor(function, weight, ctx);
+                    if (constValue != null && !constValue.equals(MemorySegment.NULL)) {
+                        ctx.valueHandles.put(flo.result(), constValue);
+                    }
+                }
+                yield MemorySegment.NULL;
+            }
+            case JavaOp.InvokeOp invokeOp -> {
+                yield processInvokeOp(invokeOp, ctx, function);
+            }
+            case CoreOp.ReturnOp returnOp -> {
+                Value returnValue = returnOp.operands().getFirst();
+                MemorySegment valueHandle = ctx.valueHandles.get(returnValue);
+                if (valueHandle != null && !valueHandle.equals(MemorySegment.NULL)) {
+                    // Create array with single return value
+                    MemorySegment valuesArray = ctx.arena.allocate(ValueLayout.ADDRESS, 1);
+                    valuesArray.setAtIndex(ValueLayout.ADDRESS, 0, valueHandle);
+                    mlir_tosa_c_api_h.mlir_function_add_return(function, valuesArray, 1);
+                }
+                yield MemorySegment.NULL;
+            }
+            default -> MemorySegment.NULL;
+        };
+    }
+
+    /**
+     * Create a constant tensor from weight data using the C API.
+     *
+     * @param function The MLIR function handle
+     * @param weight The weight information containing shape and data
+     * @param ctx The generator context
+     * @return MLIR value handle for the constant tensor
+     */
+    private static MemorySegment createConstantTensor(MemorySegment function,
+                                                       TosaModelExporter.WeightInfo weight,
+                                                       GeneratorContext ctx) {
+        long[] shape = weight.shape();
+        long numElements = weight.numElements();
+
+        // Allocate shape array
+        MemorySegment shapeArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, shape.length);
+        for (int i = 0; i < shape.length; i++) {
+            shapeArray.setAtIndex(ValueLayout.JAVA_LONG, i, shape[i]);
+        }
+
+        // Create tensor type
+        MemorySegment elementType = mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context);
+        MemorySegment tensorType = mlir_tosa_c_api_h.mlir_type_create_tensor_ranked(
+            ctx.context, shapeArray, shape.length, elementType);
+
+        // Copy weight data to native memory
+        MemorySegment dataArray = ctx.arena.allocate(ValueLayout.JAVA_FLOAT, numElements);
+        MemorySegment.copy(weight.data(), ValueLayout.JAVA_FLOAT, 0,
+                           dataArray, ValueLayout.JAVA_FLOAT, 0, numElements);
+
+        // Create constant via C API
+        return mlir_tosa_c_api_h.mlir_tosa_const_f32(
+            function, dataArray, numElements, shapeArray, shape.length, tensorType);
+    }
+
+    /**
      * Process a method invocation (TOSA operation).
      */
     private static MemorySegment processInvokeOp(JavaOp.InvokeOp invokeOp, GeneratorContext ctx,
@@ -331,19 +713,26 @@ public final class TosaCodeGenerator {
             return MemorySegment.NULL;
         }
 
-        // Get operand handles
+        // Get operand handles for tensor operands only
+        // Some operations (Conv2D, MaxPool2D) have non-tensor operands (long[] arrays)
+        // that won't be in valueHandles - we extract those separately
         List<Value> operands = invokeOp.operands();
         List<MemorySegment> operandHandles = new ArrayList<>();
+        boolean hasArrayOperands = methodName.equals("Conv2D") || methodName.equals("MaxPool2D") || methodName.equals("AvgPool2D") || methodName.equals("Reshape");
         for (Value operand : operands) {
             MemorySegment handle = ctx.valueHandles.get(operand);
             if (handle == null) {
-                return MemorySegment.NULL; // Skip if operand not found
+                if (!hasArrayOperands) {
+                    return MemorySegment.NULL; // Skip if operand not found (for ops without array args)
+                }
+                // For ops with array operands, stop collecting at first non-tensor operand
+                break;
             }
             operandHandles.add(handle);
         }
 
-        // Get result type
-        MemorySegment resultType = javaTypeToNativeTosaType(ctx, invokeOp.result().type());
+        // Get result type with the correct tensor rank
+        MemorySegment resultType = javaTypeToNativeTosaType(ctx, invokeOp.result().type(), ctx.tensorRank);
 
         // Generate the appropriate TOSA operation
         MemorySegment result = switch (methodName) {
@@ -441,6 +830,133 @@ public final class TosaCodeGenerator {
                 yield MemorySegment.NULL;
             }
 
+            // Conv2D operation
+            // Operands: input, weight, bias (tensors) + pad, stride, dilation (arrays)
+            // For now we extract constant arrays from the invocation
+            case "Conv2D" -> {
+                if (operandHandles.size() >= 3) {
+                    // Extract constant array values from the invoke operands
+                    long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
+                    long[] stride = extractLongArrayFromOperand(invokeOp, 4, ctx);
+                    long[] dilation = extractLongArrayFromOperand(invokeOp, 5, ctx);
+
+                    if (pad == null) pad = new long[]{0, 0, 0, 0};
+                    if (stride == null) stride = new long[]{1, 1};
+                    if (dilation == null) dilation = new long[]{1, 1};
+
+                    MemorySegment padArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 4);
+                    MemorySegment strideArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
+                    MemorySegment dilationArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
+
+                    for (int i = 0; i < 4; i++) padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+                    for (int i = 0; i < 2; i++) strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
+                    for (int i = 0; i < 2; i++) dilationArray.setAtIndex(ValueLayout.JAVA_LONG, i, dilation[i]);
+
+                    yield mlir_tosa_c_api_h.mlir_tosa_conv2d(function,
+                        operandHandles.get(0), operandHandles.get(1), operandHandles.get(2),
+                        padArray, strideArray, dilationArray, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // MaxPool2D operation
+            // Operands: input (tensor) + kernel, stride, pad (arrays)
+            case "MaxPool2D" -> {
+                if (!operandHandles.isEmpty()) {
+                    // Extract constant array values from the invoke operands
+                    long[] kernel = extractLongArrayFromOperand(invokeOp, 1, ctx);
+                    long[] stride = extractLongArrayFromOperand(invokeOp, 2, ctx);
+                    long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
+
+                    if (kernel == null) kernel = new long[]{2, 2};
+                    if (stride == null) stride = new long[]{2, 2};
+                    if (pad == null) pad = new long[]{0, 0, 0, 0};
+
+                    MemorySegment kernelArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
+                    MemorySegment strideArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
+                    MemorySegment padArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 4);
+
+                    for (int i = 0; i < 2; i++) kernelArray.setAtIndex(ValueLayout.JAVA_LONG, i, kernel[i]);
+                    for (int i = 0; i < 2; i++) strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
+                    for (int i = 0; i < 4; i++) padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+
+                    yield mlir_tosa_c_api_h.mlir_tosa_max_pool2d(function,
+                        operandHandles.get(0),
+                        kernelArray, strideArray, padArray, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // AvgPool2D operation
+            case "AvgPool2D" -> {
+                if (!operandHandles.isEmpty()) {
+                    long[] kernel = extractLongArrayFromOperand(invokeOp, 1, ctx);
+                    long[] stride = extractLongArrayFromOperand(invokeOp, 2, ctx);
+                    long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
+
+                    if (kernel == null) kernel = new long[]{2, 2};
+                    if (stride == null) stride = new long[]{2, 2};
+                    if (pad == null) pad = new long[]{0, 0, 0, 0};
+
+                    MemorySegment kernelArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
+                    MemorySegment strideArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
+                    MemorySegment padArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 4);
+
+                    for (int i = 0; i < 2; i++) kernelArray.setAtIndex(ValueLayout.JAVA_LONG, i, kernel[i]);
+                    for (int i = 0; i < 2; i++) strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
+                    for (int i = 0; i < 4; i++) padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+
+                    yield mlir_tosa_c_api_h.mlir_tosa_avg_pool2d(function,
+                        operandHandles.get(0),
+                        kernelArray, strideArray, padArray, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // Reshape operation
+            // Operands: input (tensor) + newShape (long[] array)
+            case "Reshape" -> {
+                if (!operandHandles.isEmpty()) {
+                    // Extract new shape from the operand
+                    long[] newShape = extractLongArrayFromOperand(invokeOp, 1, ctx);
+
+                    if (newShape == null) {
+                        // If we can't extract the shape, try to use a default flatten
+                        newShape = new long[]{-1};
+                    }
+
+                    MemorySegment shapeArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, newShape.length);
+                    for (int i = 0; i < newShape.length; i++) {
+                        shapeArray.setAtIndex(ValueLayout.JAVA_LONG, i, newShape[i]);
+                    }
+
+                    yield mlir_tosa_c_api_h.mlir_tosa_reshape(function,
+                        operandHandles.get(0),
+                        shapeArray, newShape.length, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // ReduceSum operation
+            case "ReduceSum" -> {
+                if (!operandHandles.isEmpty()) {
+                    // For now, default to reducing along axis 0
+                    yield mlir_tosa_c_api_h.mlir_tosa_reduce_sum(function,
+                        operandHandles.get(0), 0, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
+            // ReduceMax operation
+            case "ReduceMax" -> {
+                if (!operandHandles.isEmpty()) {
+                    // For now, default to reducing along axis 0
+                    yield mlir_tosa_c_api_h.mlir_tosa_reduce_max(function,
+                        operandHandles.get(0), 0, resultType);
+                }
+                yield MemorySegment.NULL;
+            }
+
             default -> MemorySegment.NULL;
         };
 
@@ -454,8 +970,24 @@ public final class TosaCodeGenerator {
 
     /**
      * Convert Java type to native TOSA tensor type.
+     *
+     * @param ctx Generator context
+     * @param type The Java TypeElement
+     * @return MLIR tensor type handle
      */
     private static MemorySegment javaTypeToNativeTosaType(GeneratorContext ctx, TypeElement type) {
+        return javaTypeToNativeTosaType(ctx, type, 1); // Default to 1D dynamic tensors
+    }
+
+    /**
+     * Convert Java type to native TOSA tensor type with static shape.
+     *
+     * @param ctx Generator context
+     * @param type The Java TypeElement
+     * @param shape The static shape dimensions
+     * @return MLIR tensor type handle with static shape
+     */
+    private static MemorySegment javaTypeToNativeTosaTypeStatic(GeneratorContext ctx, TypeElement type, long[] shape) {
         String typeStr = type.toString();
 
         // Determine element type
@@ -473,9 +1005,71 @@ public final class TosaCodeGenerator {
             elementType = mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context);
         }
 
-        // Create dynamic tensor type (unknown shape)
-        // Using rank=0 for unranked tensor (tensor<*xf32>)
-        return mlir_tosa_c_api_h.mlir_type_create_tensor_dynamic(ctx.context, 0, elementType);
+        // Create static tensor type with the specified shape
+        MemorySegment shapeArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, shape.length);
+        for (int i = 0; i < shape.length; i++) {
+            shapeArray.setAtIndex(ValueLayout.JAVA_LONG, i, shape[i]);
+        }
+        return mlir_tosa_c_api_h.mlir_type_create_tensor_ranked(ctx.context, shapeArray, shape.length, elementType);
+    }
+
+    /**
+     * Infer output type from function and input shapes.
+     * For operations like Conv2D, the output shape depends on input shapes and operation parameters.
+     */
+    private static MemorySegment inferOutputType(GeneratorContext ctx, CoreOp.FuncOp funcOp, long[][] paramShapes) {
+        TypeElement returnType = funcOp.invokableType().returnType();
+
+        // If no static shapes provided, use dynamic output
+        if (paramShapes == null) {
+            return javaTypeToNativeTosaType(ctx, returnType, ctx.tensorRank);
+        }
+
+        // For now, use the first parameter's shape as a template for the output
+        // This works for element-wise ops and gives a reasonable default
+        // More sophisticated shape inference would be needed for different ops
+        for (long[] shape : paramShapes) {
+            if (shape != null) {
+                // For Conv2D: output shape is [N, OH, OW, OC] where OC comes from weight shape
+                // For simplicity, use dynamic output type which MLIR can infer
+                return javaTypeToNativeTosaType(ctx, returnType, shape.length);
+            }
+        }
+
+        return javaTypeToNativeTosaType(ctx, returnType, ctx.tensorRank);
+    }
+
+    /**
+     * Convert Java type to native TOSA tensor type with specified rank.
+     *
+     * @param ctx Generator context
+     * @param type The Java TypeElement
+     * @param rank The tensor rank (0=scalar, 1=1D vector, 2=2D matrix, etc.)
+     * @return MLIR tensor type handle
+     */
+    private static MemorySegment javaTypeToNativeTosaType(GeneratorContext ctx, TypeElement type, int rank) {
+        String typeStr = type.toString();
+
+        // Determine element type
+        MemorySegment elementType;
+        if (typeStr.contains("Tensor<java.lang.Float>") || typeStr.contains("Tensor<Float>")) {
+            elementType = mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context);
+        } else if (typeStr.contains("Tensor<java.lang.Double>") || typeStr.contains("Tensor<Double>")) {
+            elementType = mlir_tosa_c_api_h.mlir_type_create_f64(ctx.context);
+        } else if (typeStr.contains("Tensor<java.lang.Integer>") || typeStr.contains("Tensor<Integer>")) {
+            elementType = mlir_tosa_c_api_h.mlir_type_create_i32(ctx.context);
+        } else if (typeStr.contains("Tensor<java.lang.Long>") || typeStr.contains("Tensor<Long>")) {
+            elementType = mlir_tosa_c_api_h.mlir_type_create_i64(ctx.context);
+        } else {
+            // Default to float32
+            elementType = mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context);
+        }
+
+        // Create dynamic tensor type with the specified rank
+        // rank=0 creates scalar tensor<f32>
+        // rank=1 creates 1D tensor<?xf32>
+        // rank=2 creates 2D tensor<?x?xf32>
+        return mlir_tosa_c_api_h.mlir_type_create_tensor_dynamic(ctx.context, rank, elementType);
     }
 
     /**
@@ -490,17 +1084,52 @@ public final class TosaCodeGenerator {
     }
 
     /**
+     * Extract a long[] array from an invoke operand at the given index.
+     *
+     * NOTE: Currently this returns null, meaning we use default values.
+     * Full implementation would require tracing through the code model
+     * to extract constant array values.
+     *
+     * @param invokeOp The invoke operation
+     * @param operandIndex The index of the operand (0-based)
+     * @param ctx Generator context
+     * @return The extracted long[] array, or null if not extractable (uses defaults)
+     */
+    private static long[] extractLongArrayFromOperand(JavaOp.InvokeOp invokeOp, int operandIndex, GeneratorContext ctx) {
+        // For now, return null to use default values
+        // TODO: Implement full constant array extraction from code model
+        return null;
+    }
+
+    /**
      * Context for tracking values during code generation.
      */
     private static class GeneratorContext {
         final Arena arena;
         final MemorySegment context;
+        final int tensorRank;
+        final long[][] paramShapes; // Optional static shapes for parameters
+        final SequencedMap<String, TosaModelExporter.WeightInfo> weights; // Optional weights for embedding
+        final Object modelInstance; // Optional model instance for field access resolution
         final Map<Value, MemorySegment> valueHandles = new HashMap<>();
         final Map<Value, MemorySegment> varToHandle = new HashMap<>();
 
-        GeneratorContext(Arena arena, MemorySegment context) {
+        GeneratorContext(Arena arena, MemorySegment context, int tensorRank) {
+            this(arena, context, tensorRank, null, null, null);
+        }
+
+        GeneratorContext(Arena arena, MemorySegment context, int tensorRank, long[][] paramShapes) {
+            this(arena, context, tensorRank, paramShapes, null, null);
+        }
+
+        GeneratorContext(Arena arena, MemorySegment context, int tensorRank, long[][] paramShapes,
+                         SequencedMap<String, TosaModelExporter.WeightInfo> weights, Object modelInstance) {
             this.arena = arena;
             this.context = context;
+            this.tensorRank = tensorRank;
+            this.paramShapes = paramShapes;
+            this.weights = weights;
+            this.modelInstance = modelInstance;
         }
     }
 }
