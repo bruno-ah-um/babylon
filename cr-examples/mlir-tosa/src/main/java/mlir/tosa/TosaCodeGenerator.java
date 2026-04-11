@@ -5,6 +5,7 @@ import jdk.incubator.code.Op;
 import jdk.incubator.code.TypeElement;
 import jdk.incubator.code.Value;
 import jdk.incubator.code.dialect.core.CoreOp;
+import jdk.incubator.code.dialect.java.ArrayType;
 import jdk.incubator.code.dialect.java.JavaOp;
 import mlir.tosa.bindings.mlir_tosa_c_api_h;
 
@@ -1090,11 +1091,12 @@ public final class TosaCodeGenerator {
             }
 
             // ReduceSum operation
+            // Operands: input (tensor) + axis (int) + keepDims (boolean, ignored at MLIR level)
             case "ReduceSum" -> {
                 if (!operandHandles.isEmpty()) {
-                    // For now, default to reducing along axis 0
+                    Integer axis = extractIntFromOperand(invokeOp, 1);
                     yield mlir_tosa_c_api_h.mlir_tosa_reduce_sum(function,
-                        operandHandles.get(0), 0, resultType);
+                        operandHandles.get(0), axis != null ? axis : 0, resultType);
                 }
                 yield MemorySegment.NULL;
             }
@@ -1102,9 +1104,9 @@ public final class TosaCodeGenerator {
             // ReduceMax operation
             case "ReduceMax" -> {
                 if (!operandHandles.isEmpty()) {
-                    // For now, default to reducing along axis 0
+                    Integer axis = extractIntFromOperand(invokeOp, 1);
                     yield mlir_tosa_c_api_h.mlir_tosa_reduce_max(function,
-                        operandHandles.get(0), 0, resultType);
+                        operandHandles.get(0), axis != null ? axis : 0, resultType);
                 }
                 yield MemorySegment.NULL;
             }
@@ -1236,22 +1238,122 @@ public final class TosaCodeGenerator {
     }
 
     /**
-     * Extract a long[] array from an invoke operand at the given index.
+     * Extract a long[] constant from an invoke operand by scanning preceding ops in the block.
      *
-     * NOTE: Currently this returns null, meaning we use default values.
-     * Full implementation would require tracing through the code model
-     * to extract constant array values.
+     * Handles the common patterns produced by the Java compiler for array literals:
+     * <pre>
+     *   new long[]{0, 0, 0, 0}   →  NewOp + 4× ArrayStoreOp
+     *   long[] v = ...; f(v)     →  VarOp + VarLoadOp
+     * </pre>
+     * Type conversions (int → long) via {@code ConvOp} are also folded.
      *
-     * @param invokeOp The invoke operation
-     * @param operandIndex The index of the operand (0-based)
-     * @param ctx Generator context
-     * @return The extracted long[] array, or null if not extractable (uses defaults)
+     * @param invokeOp     The invoke operation whose operand to extract
+     * @param operandIndex 0-based index of the array operand within the invocation
+     * @param ctx          Generator context (unused, kept for signature consistency)
+     * @return The extracted long[] value, or {@code null} if the value is not a
+     *         statically-known constant (falls back to caller's default)
      */
     private static long[] extractLongArrayFromOperand(
             JavaOp.InvokeOp invokeOp, int operandIndex, GeneratorContext ctx) {
-        // For now, return null to use default values
-        // TODO: Implement full constant array extraction from code model
+        List<Value> operands = invokeOp.operands();
+        if (operandIndex >= operands.size()) {
+            return null;
+        }
+        Object result = evaluateConstant(operands.get(operandIndex), invokeOp.parent());
+        return result instanceof long[] arr ? arr.clone() : null;
+    }
+
+    /**
+     * Extract a scalar int constant from an invoke operand.
+     *
+     * @param invokeOp     The invoke operation
+     * @param operandIndex 0-based index of the int operand
+     * @return The int value, or {@code null} if not statically known
+     */
+    private static Integer extractIntFromOperand(JavaOp.InvokeOp invokeOp, int operandIndex) {
+        List<Value> operands = invokeOp.operands();
+        if (operandIndex >= operands.size()) {
+            return null;
+        }
+        Object result = evaluateConstant(operands.get(operandIndex), invokeOp.parent());
+        if (result instanceof Integer i) return i;
+        if (result instanceof Long l) return l.intValue();
         return null;
+    }
+
+    /**
+     * Walk ops in {@code block} up to (not including) {@code target}'s defining op,
+     * building a constant-folded value map, then return the value mapped to {@code target}.
+     *
+     * <p>Supported op patterns:
+     * <ul>
+     *   <li>{@code CoreOp.ConstantOp} – primitive/string literals</li>
+     *   <li>{@code JavaOp.ConvOp} – numeric widening (int → long, etc.)</li>
+     *   <li>{@code CoreOp.VarOp / VarLoadOp / VarStoreOp} – local variables</li>
+     *   <li>{@code JavaOp.NewOp} with {@code ArrayType} result – {@code new long[n]}</li>
+     *   <li>{@code JavaOp.ArrayAccessOp.ArrayStoreOp} – array element initialization</li>
+     * </ul>
+     */
+    private static Object evaluateConstant(Value target, Block block) {
+        // valueMap: SSA Value → constant Java object
+        // For VarOp results we store a one-element Object[] as a mutable box.
+        Map<Value, Object> valueMap = new HashMap<>();
+
+        for (Op op : block.ops()) {
+            switch (op) {
+                case CoreOp.ConstantOp co -> valueMap.put(co.result(), co.value());
+
+                case JavaOp.ConvOp co -> {
+                    // Numeric type widening / narrowing (e.g. int literal stored in long[])
+                    Object v = valueMap.get(co.operands().getFirst());
+                    if (v instanceof Number n) {
+                        valueMap.put(co.result(), n.longValue());
+                    }
+                }
+
+                case CoreOp.VarOp vo -> {
+                    Object init = vo.isUninitialized() || vo.operands().isEmpty()
+                        ? null
+                        : valueMap.get(vo.operands().getFirst());
+                    valueMap.put(vo.result(), new Object[]{init}); // mutable box
+                }
+
+                case CoreOp.VarAccessOp.VarLoadOp lo -> {
+                    Object box = valueMap.get(lo.operands().getFirst());
+                    if (box instanceof Object[] b && b[0] != null) {
+                        valueMap.put(lo.result(), b[0]);
+                    }
+                }
+
+                case CoreOp.VarAccessOp.VarStoreOp so -> {
+                    Object box = valueMap.get(so.operands().get(0));
+                    if (box instanceof Object[] b) {
+                        b[0] = valueMap.get(so.operands().get(1));
+                    }
+                }
+
+                case JavaOp.NewOp no when no.resultType() instanceof ArrayType -> {
+                    // new long[size]  →  allocate zero-filled long[]
+                    Object sizeObj = valueMap.get(no.operands().getFirst());
+                    if (sizeObj instanceof Integer size) {
+                        valueMap.put(no.result(), new long[size]);
+                    }
+                }
+
+                case JavaOp.ArrayAccessOp.ArrayStoreOp so -> {
+                    Object arr = valueMap.get(so.operands().get(0));
+                    Object idx = valueMap.get(so.operands().get(1));
+                    Object val = valueMap.get(so.operands().get(2));
+                    if (arr instanceof long[] a && idx instanceof Integer i && val instanceof Number n) {
+                        a[i] = n.longValue();
+                    }
+                }
+
+                default -> {}
+            }
+        }
+
+        return valueMap.get(target);
     }
 
     /**
