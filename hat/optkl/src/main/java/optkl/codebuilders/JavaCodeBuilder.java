@@ -29,20 +29,116 @@ import jdk.incubator.code.dialect.java.JavaType;
 import optkl.OpHelper;
 
 import java.lang.invoke.MethodHandles;
+import java.util.function.Consumer;
 
 public class JavaCodeBuilder<T extends JavaCodeBuilder<T>> extends ScopeAwareJavaOrC99StyleCodeBuilder<T> {
+
+    public T importStatic(Class<?> clazz, String ...suffices){
+        importClasses(clazz);
+        var split = clazz.getName().split("\\.");
+        for (var suffix :suffices) {
+            importKeyword().sp().staticKeyword().sp();
+            for (int i = 0; i < split.length; i++) {
+                id(split[i]).dot();
+            }
+            id(suffix).snl();
+        }
+        return self();
+    }
+    public T importClasses(Class<?> ...classes){
+        for(var clazz :classes){
+            var split = clazz.getName().split("\\.");
+            importKeyword().sp().id(split[0]);
+            for (int i = 1; i < split.length; i++) {
+                dot().id(split[i]);
+            }
+             snl();
+        }
+        return self();
+    }
+    public T packageName(Package p){
+        var split = p.getName().split("\\.");
+        packageKeyword().sp().id(split[0]);
+        for(int i = 1; i< split.length; i++){
+            dot().id(split[i]);
+        }
+        return snl();
+    }
+    public T publicKeyword() {
+        return keyword("public");
+    }
+    public T publicKwSp() {
+        return publicKeyword().sp();
+    }
+    public T privateKeyword() {
+        return keyword("private");
+    }
+    public T protectedKeyword() {
+        return keyword("protected");
+    }
+
+    public T importKeyword() {
+        return keyword("import");
+    }
+
+    public T packageKeyword() {
+        return keyword("package");
+    }
+
+    public T recordKeyword() {
+        return keyword("record");
+    }
+
+    public T record(String recordName, Consumer<T> args, Consumer<T> impl, Consumer<T> body) {
+         recordKeyword().sp().type(recordName).paren(args);
+         if (impl != null){
+             sp().implementsKeyword().sp();
+             impl.accept(self());
+         }
+         return body(body).nl();
+    }
+    public T record(String recordName, Consumer<T> args, Consumer<T> impl) {
+       return record(recordName,args,impl, _->{});
+    }
+    public T record(String recordName, Consumer<T> args) {
+        return record(recordName,args,null, _->{});
+    }
+    public T extendsKeyword() {
+        return keyword("extends");
+    }
+    public T extendsKwSp() {
+        return extendsKeyword().sp();
+    }
+    public T implementsKeyword() {
+        return keyword("implements");
+    }
+    public T implementsKwSp(){
+        return interfaceKeyword().sp();
+    }
+    public T interfaceKeyword() {
+        return keyword("interface");
+    }
+
+    public T interfaceKwSp() {
+        return interfaceKeyword().sp();
+    }
+
+
+
+
+
     @Override
     public T type( JavaType javaType) {
         // lets do equiv of SimpleName
         String longName = javaType.toString();
         int lastIdx = Math.max(longName.lastIndexOf('$'),longName.lastIndexOf('.'));
         String shortName  = lastIdx>0?longName.substring(lastIdx+1):longName;
-        return typeName(shortName);
+        return type(shortName);
     }
 
     public T createJava(ScopedCodeBuilderContext buildContext) {
         buildContext.funcScope(buildContext.funcOp(), () -> {
-            typeName(buildContext.funcOp().resultType().toString()).space().funcName(buildContext.funcOp());
+            type(buildContext.funcOp().resultType().toString()).sp().funcName(buildContext.funcOp());
             parenNlIndented(_ ->
                     commaNlSeparated(
                             buildContext.paramTable.list(),

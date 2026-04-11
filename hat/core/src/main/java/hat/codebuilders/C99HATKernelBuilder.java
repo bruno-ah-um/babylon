@@ -27,7 +27,7 @@ package hat.codebuilders;
 import hat.KernelContext;
 import hat.buffer.BF16Array;
 import hat.buffer.F16Array;
-import hat.device.DeviceType;
+import hat.callgraph.KernelCallGraph;
 import hat.dialect.HATBarrierOp;
 import hat.dialect.HATF16Op;
 import hat.dialect.HATMemoryDefOp;
@@ -36,13 +36,17 @@ import hat.dialect.HATPtrOp;
 import hat.dialect.HATThreadOp;
 import hat.dialect.HATVectorOp;
 import hat.dialect.ReducedFloatType;
+import hat.phases.HATFP16Phase;
+import hat.phases.HATPhaseUtils;
 import hat.types.BF16;
 import hat.types.F16;
-import hat.types.HAType;
+import hat.types._F16;
+import optkl.IfaceValue;
+import jdk.incubator.code.Value;
+import jdk.incubator.code.dialect.java.PrimitiveType;
 import optkl.OpHelper;
 import optkl.codebuilders.ScopedCodeBuilderContext;
 import optkl.ifacemapper.BoundSchema;
-import optkl.ifacemapper.MappableIface;
 import optkl.ifacemapper.Schema;
 import jdk.incubator.code.Op;
 import optkl.FuncOpParams;
@@ -53,20 +57,24 @@ import jdk.incubator.code.dialect.java.ClassType;
 import jdk.incubator.code.dialect.java.JavaOp;
 import jdk.incubator.code.dialect.java.JavaType;
 import optkl.codebuilders.CodeBuilder;
-
 import java.util.List;
+import java.util.SequencedSet;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static hat.buffer.F16Array.F16Impl;
 
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
-import static optkl.OpHelper.Named.NamedStaticOrInstance.FieldAccess.fieldAccess;
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
+import static java.lang.invoke.MethodHandles.lookup;
+import static optkl.OpHelper.Invoke;
+import static optkl.OpHelper.FieldAccess.fieldAccess;
+import static optkl.OpHelper.Invoke.invoke;
 
 public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> extends C99HATCodeBuilder<T> implements HATOpDispatcher<T> {
-
-    protected C99HATKernelBuilder(ScopedCodeBuilderContext scopedCodeBuilderContext) {
+    protected  final KernelCallGraph.State callgraphState;
+    protected C99HATKernelBuilder(KernelCallGraph.State callgraphState, ScopedCodeBuilderContext scopedCodeBuilderContext) {
         super(scopedCodeBuilderContext);
+        this.callgraphState = callgraphState;
     }
 
     public final T HAT_KERNEL() {
@@ -89,65 +97,76 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         return keyword("HAT_BARRIER");
     }
 
-    public final T HAT_GIX(){
-        return identifier("HAT_GIX");
+    public final T HAT_GIX() {
+        return id("HAT_GIX");
     }
 
-    public final T HAT_GIY(){
-        return identifier("HAT_GIY");
+    public final T HAT_GIY() {
+        return id("HAT_GIY");
     }
 
-    public final T HAT_GIZ(){
-        return identifier("HAT_GIZ");
+    public final T HAT_GIZ() {
+        return id("HAT_GIZ");
     }
 
-    public final T HAT_GSX(){
-        return identifier("HAT_GSX");
+    public final T HAT_GSX() {
+        return id("HAT_GSX");
     }
 
-    public final T HAT_GSY(){
-        return identifier("HAT_GSY");
+    public final T HAT_GSY() {
+        return id("HAT_GSY");
     }
 
-    public final T HAT_GSZ(){
-        return identifier("HAT_GSZ");
+    public final T HAT_GSZ() {
+        return id("HAT_GSZ");
     }
 
-    public final T HAT_LIX(){
-        return identifier("HAT_LIX");
+    public final T HAT_LIX() {
+        return id("HAT_LIX");
     }
 
-    public final T HAT_LIY(){
-        return identifier("HAT_LIY");
+    public final T HAT_LIY() {
+        return id("HAT_LIY");
     }
 
-    public final T HAT_LIZ(){
-        return identifier("HAT_LIZ");
+    public final T HAT_LIZ() {
+        return id("HAT_LIZ");
     }
 
-    public final T HAT_LSX(){
-        return identifier("HAT_LSX");
+    public final T HAT_LSX() {
+        return id("HAT_LSX");
     }
 
-    public final T HAT_LSY(){
-        return identifier("HAT_LSY");
+    public final T HAT_LSY() {
+        return id("HAT_LSY");
     }
 
-    public final T HAT_LSZ(){
-        return identifier("HAT_LSZ");
+    public final T HAT_LSZ() {
+        return id("HAT_LSZ");
     }
 
-
-    public final T HAT_BIX(){
-        return identifier("HAT_BIX");
+    public final T HAT_BIX() {
+        return id("HAT_BIX");
     }
 
-    public final T HAT_BIY(){
-        return identifier("HAT_BIY");
+    public final T HAT_BIY() {
+        return id("HAT_BIY");
     }
 
-    public final T HAT_BIZ(){
-        return identifier("HAT_BIZ");
+    public final T HAT_BIZ() {
+        return id("HAT_BIZ");
+    }
+
+    public final T HAT_BSX() {
+        return id("HAT_BSX");
+    }
+
+    public final T HAT_BSY() {
+        return id("HAT_BSY");
+    }
+
+    public final T HAT_BSZ() {
+        return id("HAT_BSZ");
     }
 
     @Override
@@ -168,33 +187,35 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
             case HATThreadOp.HAT_BI.HAT_BIX _ -> HAT_BIX();
             case HATThreadOp.HAT_BI.HAT_BIY _ -> HAT_BIY();
             case HATThreadOp.HAT_BI.HAT_BIZ _ -> HAT_BIZ();
+            case HATThreadOp.HAT_BS.HAT_BSX _ -> HAT_BSX();
+            case HATThreadOp.HAT_BS.HAT_BSY _ -> HAT_BSY();
+            case HATThreadOp.HAT_BS.HAT_BSZ _ -> HAT_BSZ();
         });
-
     }
 
     public final T kernelDeclaration(CoreOp.FuncOp funcOp) {
-        return HAT_KERNEL().space().voidType().space().funcName(funcOp);
+        return HAT_KERNEL().sp().voidType().sp().funcName(funcOp);
     }
 
     public final  T functionDeclaration( JavaType javaType, CoreOp.FuncOp funcOp) {
-        return HAT_FUNC().space().type(javaType).space().funcName(funcOp);
+        return HAT_FUNC().sp().type(javaType).sp().funcName(funcOp);
     }
 
     public final boolean isHalfType(Schema.IfaceType ifaceType) {
-        return (ifaceType.iface.getName().equals(F16.class.getName())
-                || ifaceType.iface.getName().equals(F16Array.F16Impl.class.getName()));
+        return ifaceType.iface.isAssignableFrom(F16.class)
+                || ifaceType.iface.isAssignableFrom(F16Array.F16Impl.class);
     }
 
     public final boolean isbfloat16(Schema.IfaceType ifaceType) {
-        return (ifaceType.iface.getName().equals(BF16.class.getName())
-                || ifaceType.iface.getName().equals(BF16Array.BF16Impl.class.getName()));
+         return ifaceType.iface.isAssignableFrom(BF16.class)
+               || ifaceType.iface.isAssignableFrom(BF16Array.BF16Impl.class);
     }
 
     public final T typedef(BoundSchema<?> boundSchema, Schema.IfaceType ifaceType) {
         typedefKeyword()
-                .space()
+                .sp()
                 .structOrUnion(ifaceType instanceof Schema.IfaceType.Struct)
-                .space()
+                .sp()
                 .suffix_s(ifaceType.iface.getSimpleName())
                 .braceNlIndented(_ -> {
                     int fieldCount = ifaceType.fields.size();
@@ -205,13 +226,13 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
                         boolean isLast = fieldIdx.get() == fieldCount - 1;
                         if (field instanceof Schema.FieldNode.AbstractPrimitiveField primitiveField) {
                             if (isHalfType(ifaceType)) {
-                                typeName("half");
+                                type("half");
                             } else if (isbfloat16(ifaceType)) {
-                                typeName("BFLOAT16");
+                                type("BFLOAT16");
                             } else {
-                                typeName(primitiveField.type.getSimpleName());
+                                type(primitiveField.type.getSimpleName());
                             }
-                            space().typeName(primitiveField.name);
+                            sp().type(primitiveField.name);
                             if (primitiveField instanceof Schema.FieldNode.PrimitiveArray array) {
                                 if (array instanceof Schema.FieldNode.PrimitiveFieldControlledArray) {
                                     if (isLast && ifaceType.parent == null) {
@@ -240,14 +261,12 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
                             }
                         } else if (field instanceof Schema.FieldNode.AbstractIfaceField ifaceField) {
                             suffix_t(ifaceField.ifaceType.iface);
-                            space().typeName(ifaceField.name);
+                            sp().type(ifaceField.name);
                             if (ifaceField instanceof Schema.FieldNode.IfaceArray array) {
                                 if (array instanceof Schema.FieldNode.IfaceFieldControlledArray fieldControlledArray) {
                                     if (isLast && ifaceType.parent == null) {
                                         sbrace(_ -> literal(1));
                                     } else {
-                                      //  if (boundSchema != null) {
-                                          //  var done = StreamMutable.of(false);
                                             boundSchema.boundArrayFields().stream()
                                                     .filter(a->a.field.equals(ifaceField))
                                                     .findFirst()
@@ -256,9 +275,6 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
                                                             ()->{
                                                                 throw new IllegalStateException("we need to extract the array size hat kind of array ");
                                                             });
-                                        //} else {
-                                          //  throw new IllegalStateException("bound schema is null  !");
-                                      //  }
                                     }
                                 } else if (array instanceof Schema.FieldNode.IfaceFixedArray fixed) {
                                     sbrace(_ -> literal(Math.max(1, fixed.len)));
@@ -267,7 +283,7 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
                                 }
                             }
                         } else if (field instanceof Schema.SchemaNode.Padding padding) {
-                            u08Type().space().identifierWithRandomSuffix("pad$",5).sbrace(_->intValue((int)(padding.len)));//; emitText(toC99(padding));
+                            u08Type().sp().identifierWithRandomSuffix("pad$",5).sbrace(_->intValue((int)(padding.len)));//; emitText(toC99(padding));
                         } else {
                             throw new IllegalStateException("hmm");
                         }
@@ -282,13 +298,13 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
      * Generates a suffix from a set of n-random characters from a set of legal characters in C99.
      */
     public  final  T identifierWithRandomSuffix(String prefix, final int len) {
-        StringBuilder sb = new StringBuilder();
-        final String LEGAL_CHARS = "_$ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        var sb = new StringBuilder();
+        final var LEGAL_CHARS = "_$ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         ThreadLocalRandom.current() //
                 .ints(len, 0, LEGAL_CHARS.length()) //
                 .mapToObj(LEGAL_CHARS::charAt) //
                 .forEach(sb::append);
-        identifier(prefix+sb.toString());
+        id(prefix+sb);
         return self();
     }
 
@@ -296,14 +312,14 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
 
 
     public final T privateDeclaration(LocalArrayDeclaration localArrayDeclaration) {
-        return suffix_t(localArrayDeclaration.classType()).space().varName(localArrayDeclaration.varOp());
+        return suffix_t(localArrayDeclaration.classType()).sp().varName(localArrayDeclaration.varOp());
     }
 
     public final T localDeclaration(LocalArrayDeclaration localArrayDeclaration) {
         return HAT_LOCAL_MEM()
-                .space() // we should be able to compose-call to privateDeclaration?
+                .sp() // we should be able to compose-call to privateDeclaration?
                 .suffix_t(localArrayDeclaration.classType())
-                .space()
+                .sp()
                 .varName(localArrayDeclaration.varOp());
     }
 
@@ -326,8 +342,8 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
 
     public final  T types() {
         return
-                 typedefKeyword().space().s08Type("byte").semicolonNl()
-                .typedefKeyword().space().s08Type("boolean").semicolonNl()
+                 typedefKeyword().sp().s08Type("byte").snl()
+                .typedefKeyword().sp().s08Type("boolean").snl()
                 .typedefStruct(KernelContext.class, _ -> s32Type("dimensions").semicolon()).nl();
     }
 
@@ -336,6 +352,12 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         var fieldAccess = fieldAccess(scopedCodeBuilderContext().lookup(),fieldLoadOp);
         if (fieldAccess.operandCount()==0 && fieldAccess.isPrimitive()) {
             literal(fieldAccess.getStaticFinalPrimitiveValue().toString());
+
+            // Experiment: if it is float, then generate "f"
+            PrimitiveType primitiveType = (PrimitiveType) fieldLoadOp.resultType();
+            if (primitiveType.toBasicType() == JavaType.FLOAT) {
+                emitText("f");
+            }
         } else {
             throw new IllegalStateException("What is this field load ?" + fieldLoadOp);
         }
@@ -344,16 +366,21 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
 
     @Override
     public final  T type( JavaType javaType) {
-        if (javaType instanceof ClassType classType && OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType, MappableIface.class)) {
-            HAT_GLOBAL_MEM().space().suffix_t(classType).asterisk();
-        } else if (OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType,KernelContext.class)) {
-            HAT_GLOBAL_MEM().space().suffix_t(KernelContext.class).asterisk();
+        if (C99VecAndMatHandler.isVecOrMatType(scopedCodeBuilderContext().lookup(),javaType)){
+            C99VecAndMatHandler.handleType(self(),javaType);
+        }else if (javaType instanceof ClassType classType
+                && OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType, IfaceValue.class)
+                && !OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType, _F16.class)
+        ) {
+            HAT_GLOBAL_MEM().sp().suffix_t(classType).asterisk();
+        } else if (OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType, KernelContext.class)) {
+            HAT_GLOBAL_MEM().sp().suffix_t(KernelContext.class).asterisk();
         } else if (OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType,F16.class)) {// TODO: update this with a custom op, to avoid direct use of Impls
-            HAT_GLOBAL_MEM().space().suffix_t(F16Impl.class).asterisk();
+            HAT_GLOBAL_MEM().sp().suffix_t(F16Impl.class).asterisk();
         } else if (OpHelper.isAssignable(scopedCodeBuilderContext().lookup(), javaType,BF16.class)) {// TODO: update this with a custom op, to avoid direct use of Impls
-            HAT_GLOBAL_MEM().space().suffix_t(BF16Array.BF16Impl.class).asterisk();
+            HAT_GLOBAL_MEM().sp().suffix_t(BF16Array.BF16Impl.class).asterisk();
         } else {
-            typeName(javaType.toString());
+            type(javaType.toString());
         }
         return self();
     }
@@ -411,6 +438,14 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         return suffix_t(BF16.class);
     }
 
+    protected final T genReducedType(ReducedFloatType reducedFloatType) {
+        return (switch (reducedFloatType) {
+            case ReducedFloatType.HalfFloat _ -> f16Type();
+            case ReducedFloatType.BFloat16 _ -> bf16Type();
+            default -> throw new IllegalStateException("Unexpected value: " + reducedFloatType);
+        });
+    }
+
     @Override
     public final T hatF16VarOp( HATF16Op.HATF16VarOp hatF16VarOp) {
         ReducedFloatType reducedFloatType = hatF16VarOp.reducedFloatType();
@@ -418,12 +453,12 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
             case ReducedFloatType.HalfFloat _ -> f16Type();
             case ReducedFloatType.BFloat16 _ ->  bf16Type();
             default -> throw new IllegalStateException("Unexpected value: " + reducedFloatType);
-        }).space().assign(
-                _-> identifier(hatF16VarOp.varName()),
+        }).sp().assign(
+                _-> id(hatF16VarOp.varName()),
                 _->recurse( OpHelper.asResultOrThrow(hatF16VarOp.operands().getFirst()).op()));
     }
 
-    private boolean isMixedFirstOperand(byte f32Mixed) {
+    protected boolean isMixedFirstOperand(byte f32Mixed) {
         return f32Mixed != 0 && f32Mixed != HATF16Op.HATF16BinaryOp.FIRST_OP;
     }
 
@@ -432,15 +467,28 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
     }
 
     public final T builtin_float2bfloat16() {
-        return identifier("floatTobfloat16");
+        return id("floatTobfloat16");
     }
 
     public final T builtin_bfloat16ToFloat() {
-        return identifier("bfloat16Tofloat");
+        return id("bfloat16Tofloat");
     }
 
+    public static final String VALUE = "value";
+
     private final T binaryOperationsForBfloat16( HATF16Op.HATF16BinaryOp hatf16BinaryOp) {
-        byte f32Mixed = hatf16BinaryOp.getByteFloatRepresentation();
+
+        boolean isFirstOperandReference = HATPhaseUtils.isArrayReference(lookup(), hatf16BinaryOp.operands().get(0));
+        boolean isSecondOperandReference = HATPhaseUtils.isArrayReference(lookup(), hatf16BinaryOp.operands().get(1));
+        final byte f32Mixed;
+        if (!isFirstOperandReference && HATPhaseUtils.isOperandF32(hatf16BinaryOp.operands().get(0))) {
+            f32Mixed = HATF16Op.HATF16BinaryOp.FIRST_OP;
+        } else if (!isSecondOperandReference && HATPhaseUtils.isOperandF32(hatf16BinaryOp.operands().get(1))) {
+            f32Mixed = HATF16Op.HATF16BinaryOp.LAST_OP;
+        } else {
+            f32Mixed = 0x00;
+        }
+
         paren(_-> bf16Type());
         brace(_-> {
             paren(_-> {
@@ -451,27 +499,26 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
                 }
                 recurse( OpHelper.asResultOrThrow(hatf16BinaryOp.operands().getFirst()).op());
 
-                List<Boolean> references = hatf16BinaryOp.references();
-                if (references.getFirst()) {
-                    rarrow().identifier("value");
+                if (isFirstOperandReference) {
+                    rarrow().id(VALUE);
                 } else if (!OpHelper.isPrimitiveResult(hatf16BinaryOp.operands().getFirst())) {
-                    dot().identifier("value");
+                    dot().id(VALUE);
                 }
 
                 if (isMixedFirstOperand(f32Mixed) || f32Mixed == 0) {
                     cparen(); //closed
                 }
-                space().identifier(hatf16BinaryOp.binaryOperationType().symbol()).space();
+                sp().id(hatf16BinaryOp.binaryOperationType().symbol()).sp();
 
                 if (isMixedSecondOperand(f32Mixed) || f32Mixed == 0) {
                     builtin_bfloat16ToFloat().oparen();
                 }
 
                 recurse(OpHelper.asResultOrThrow(hatf16BinaryOp.operands().get(1)).op());
-                if (references.get(1)) {
-                    rarrow().identifier("value");
+                if (isSecondOperandReference) {
+                    rarrow().id(VALUE);
                 } else if (!OpHelper.isPrimitiveResult(hatf16BinaryOp.operands().get(1))) {
-                    dot().identifier("value");
+                    dot().id(VALUE);
                 }
 
                 if (isMixedSecondOperand(f32Mixed) || f32Mixed == 0) {
@@ -493,19 +540,21 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         return brace(_->
             paren(_-> {
                 recurse( OpHelper.asResultOrThrow(hatF16BinaryOp.operands().getFirst()).op());
-                if (hatF16BinaryOp.references().getFirst()) {
-                    rarrow().identifier("value");
+                boolean isFirstOperandReference = HATPhaseUtils.isArrayReference(lookup(), hatF16BinaryOp.operands().get(0));
+                boolean isSecondOperandReference = HATPhaseUtils.isArrayReference(lookup(), hatF16BinaryOp.operands().get(1));
+                if (isFirstOperandReference) {
+                    rarrow().id(VALUE);
                 } else if (!OpHelper.isPrimitiveResult(hatF16BinaryOp.operands().getFirst())) {
-                    dot().identifier("value");
+                    dot().id(VALUE);
                 } else {
                     blockComment("hatF16BinaryOp not a result !!");
                 }
-                space().identifier(hatF16BinaryOp.binaryOperationType().symbol()).space();
+                sp().id(hatF16BinaryOp.binaryOperationType().symbol()).sp();
                 recurse( OpHelper.asResultOrThrow(hatF16BinaryOp.operands().get(1)).op());
-                if (hatF16BinaryOp.references().get(1)) {
-                    rarrow().identifier("value");
+                if (isSecondOperandReference) {
+                    rarrow().id(VALUE);
                 } else if (!OpHelper.isPrimitiveResult(hatF16BinaryOp.operands().get(1))) {
-                    dot().identifier("value");
+                    dot().id(VALUE);
                 }else {
                     blockComment("hatF16BinaryOp not a value !!");
                 }
@@ -515,12 +564,12 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
 
     @Override
     public final T hatF16VarLoadOp( HATF16Op.HATF16VarLoadOp hatF16VarLoadOp) {
-        return identifier(hatF16VarLoadOp.varName()).dot().identifier("value");
+        return id(hatF16VarLoadOp.varName()).dot().id(VALUE);
     }
 
     @Override
     public final T hatVectorMakeOf( HATVectorOp.HATVectorMakeOfOp hatVectorMakeOfOp) {
-        return identifier(hatVectorMakeOfOp.varName());
+        return id(hatVectorMakeOfOp.varName());
     }
 
     public abstract T genVectorIdentifier( HATVectorOp.HATVectorOfOp hatVectorOfOp);
@@ -536,29 +585,29 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
 
     @Override
     public final T hatPrivateVarInitOp( HATMemoryVarOp.HATPrivateInitVarOp hatPrivateInitVarOp) {
-        return suffix_t(hatPrivateInitVarOp.classType()).space()
+        return suffix_t(hatPrivateInitVarOp.classType()).sp()
                 .assign(
-                        _-> identifier(hatPrivateInitVarOp.varName()),
+                        _-> id(hatPrivateInitVarOp.varName()),
                         _->recurse(OpHelper.asResultOrThrow(hatPrivateInitVarOp.operands().getFirst()).op()));
     }
 
     @Override
     public final T hatMemoryLoadOp( HATMemoryDefOp.HATMemoryLoadOp hatMemoryLoadOp) {
         return recurse( OpHelper.asResultOrThrow(hatMemoryLoadOp.operands().getFirst()).op())
-                .dot().identifier(hatMemoryLoadOp.memberName())
+                .dot().id(hatMemoryLoadOp.memberName())
                 .when(hatMemoryLoadOp.operands().size() > 1,_->// If the hatMemoryLoadOp has more than 1 operand, the second is the index
                    sbrace(_-> recurse( OpHelper.asResultOrThrow(hatMemoryLoadOp.operands().get(1)).op()))
                 );
     }
 
     public final T hatPtrLoadOp( HATPtrOp.HATPtrLoadOp hatPtrLoadOp) {
-        ptrAccess( hatPtrLoadOp);
+        ptrAccess(hatPtrLoadOp);
         return self();
     }
 
     @Override
     public final T hatPtrStoreOp( HATPtrOp.HATPtrStoreOp hatPtrStoreOp) {
-        ptrAccess( hatPtrStoreOp).equals().recurse( ((Op.Result) hatPtrStoreOp.operands().getLast()).op());
+        ptrAccess(hatPtrStoreOp).equals().recurse( ((Op.Result) hatPtrStoreOp.operands().getLast()).op());
         return self();
     }
 
@@ -568,8 +617,8 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         return self();
     }
 
-    public final T ptrAccess( HATPtrOp hatPtrOp) {
-        identifier(hatPtrName(hatPtrOp));
+    private T ptrAccess(HATPtrOp hatPtrOp) {
+        id(hatPtrOp.name());
         boolean isLocalOrPrivateDS = false;
         if (((Op.Result) hatPtrOp.operands().getFirst()).op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp) {
             Op resolve = scopedCodeBuilderContext().resolve(varLoadOp.operands().getFirst());
@@ -580,16 +629,16 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         either(isLocalOrPrivateDS, CodeBuilder::dot, CodeBuilder::rarrow);
 
         if (hatPtrOp instanceof HATPtrOp.HATPtrLengthOp) {
-            identifier("length");
+            id("length");
         } else {
             boolean finalIsLocalOrPrivateDS = isLocalOrPrivateDS;// ?
-            identifier("array").sbrace(_ -> {
-                paren(_ -> identifier("long"));
+            id("array").sbrace(_ -> {
+                paren(_ -> id("long")); // is this a cast (long)  maybe cast(_->typeName("long"))?
                 paren(_ -> {
                     if (hatPtrOp.strides().size() > 1) {
-                        paren(_ -> recurse( ((Op.Result) hatPtrOp.operands().get(2)).op()));
-                        asterisk().identifier(hatPtrName(hatPtrOp));
-                        either(finalIsLocalOrPrivateDS, CodeBuilder::dot, CodeBuilder::rarrow).identifier(hatPtrOp.strides() != null ? hatPtrOp.strides().getFirst() : "width");
+                        paren(_ -> recurse(((Op.Result) hatPtrOp.operands().get(2)).op()));
+                        asterisk().id(hatPtrOp.name());
+                        either(finalIsLocalOrPrivateDS, CodeBuilder::dot, CodeBuilder::rarrow).id(hatPtrOp.strides() != null ? hatPtrOp.strides().getFirst() : "width");
                         add().paren(_ -> recurse( ((Op.Result) hatPtrOp.operands().get(1)).op()));
                     } else {
                         recurse( ((Op.Result) hatPtrOp.operands().get(1)).op());
@@ -598,16 +647,6 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
             });
         }
         return self();
-    }
-
-    public final String hatPtrName(HATPtrOp hatPtrOp) {
-        Op op = ((Op.Result) ((Op.Result) (hatPtrOp.operands().getFirst())).op().operands().getFirst()).op();
-        return switch (op) {
-            case CoreOp.VarOp varOp -> varOp.varName();
-            case HATMemoryVarOp.HATLocalVarOp hatLocalVarOp -> hatLocalVarOp.varName();
-            case HATMemoryVarOp.HATPrivateVarOp hatPrivateVarOp -> hatPrivateVarOp.varName();
-            case null, default -> "";
-        };
     }
 
     /**
@@ -630,10 +669,10 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
         return funcDef(_ -> f32Type(),
                        _ -> builtin_bfloat16ToFloat(),
                        _ -> u16Type(parameterName),
-                       _ -> bfloat16Type(b16).semicolonNl()
-                               .identifier(b16).dot().identifier(s).sbrace( _ -> intConstZero()).equals().intConstZero().semicolonNl()
-                               .identifier(b16).dot().identifier(s).sbrace( _ -> intConstOne()).equals().constant(parameterName).semicolonNl()
-                               .returnKeyword(_-> identifier(b16).dot().identifier(f)));
+                       _ -> bfloat16Type(b16).snl()
+                               .id(b16).dot().id(s).sbrace(_ -> intConstZero()).equals().intConstZero().snl()
+                               .id(b16).dot().id(s).sbrace(_ -> intConstOne()).equals().constant(parameterName).snl()
+                               .returnKeyword(_-> id(b16).dot().id(f)));
     }
 
     /**
@@ -661,15 +700,15 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
                 _ -> builtin_float2bfloat16(),
                 _ -> f32Type(parameterName),
                 _ -> assign(_ -> bfloat16Type(idBFloat16),
-                        _ ->  brace( _ -> identifier(parameterName)).semicolonNl())
-                        .assign( _ -> u32Type("bits"), _ -> identifier(idBFloat16).dot().identifier("i")).semicolonNl()
-                        .assign( _ -> u16Type("sign_bit"), _ -> cast( _ -> s16Type()).paren( _ -> paren( _ -> identifier("bits").ampersand().constant("0x80000000")).rightShift(16))).semicolonNl()
-                        .assign( _ -> s32Type("lsb"), _ -> identifier("bits").ampersand().constant("0x10000")).semicolonNl()
-                        .assign( _ -> s32Type("round"), _ -> identifier("bits").ampersand().constant("0x08000")).semicolonNl()
-                        .assign( _ -> s32Type("sticky"), _ -> identifier("bits").ampersand().constant("0x07FFF")).semicolonNl()
-                        .ifTrueCondition(_ -> identifier("round").space().ne().space().intConstZero().condAnd().paren( _ -> paren( _ -> identifier("lsb").bitwiseOR().identifier("sticky")).ne().intConstZero()),
-                                _ -> identifier("bits").space().plusEquals().space().constant("0x10000"))
-                        .returnKeyword( _ -> cast( _ ->u16Type()).paren( _ -> paren( _ -> paren( _-> identifier("bits").rightShift(16)).bitwiseOR().identifier("sign_bit")).ampersand().constant("0xffff"))));
+                        _ ->  brace( _ -> id(parameterName)).snl())
+                        .assign( _ -> u32Type("bits"), _ -> id(idBFloat16).dot().id("i")).snl()
+                        .assign( _ -> u16Type("sign_bit"), _ -> cast( _ -> s16Type()).paren( _ -> paren( _ -> id("bits").ampersand().constant("0x80000000")).rightShift(16))).snl()
+                        .assign( _ -> s32Type("lsb"), _ -> id("bits").ampersand().constant("0x10000")).snl()
+                        .assign( _ -> s32Type("round"), _ -> id("bits").ampersand().constant("0x08000")).snl()
+                        .assign( _ -> s32Type("sticky"), _ -> id("bits").ampersand().constant("0x07FFF")).snl()
+                        .ifTrueCondition(_ -> id("round").sp().ne().sp().intConstZero().condAnd().paren(_ -> paren(_ -> id("lsb").bitwiseOR().id("sticky")).ne().intConstZero()),
+                                _ -> id("bits").sp().plusEquals().sp().constant("0x10000"))
+                        .returnKeyword( _ -> cast( _ ->u16Type()).paren( _ -> paren( _ -> paren( _-> id("bits").rightShift(16)).bitwiseOR().id("sign_bit")).ampersand().constant("0xffff"))));
     }
 
 
@@ -732,77 +771,132 @@ public abstract class C99HATKernelBuilder<T extends C99HATKernelBuilder<T>> exte
     @Override
     public final T invokeOp( JavaOp.InvokeOp invokeOp) {
         var invoke = invoke(scopedCodeBuilderContext().lookup(),invokeOp);
-        if ( invoke.refIs(MappableIface.class, HAType.class, DeviceType.class)) { // we need a common type
-            if (invoke.isInstance() && invoke.operandCount() == 1 && invoke.returnsInt() && invoke.named(atomicIncRegex)) {
+        if (C99VecAndMatHandler.isVecInvoke( invoke)){ // hacked for vec op calls.
+            C99VecAndMatHandler.handleInvoke(self(),invoke);
+        }else if (invoke.refIs(IfaceValue.class)) {
+            if (invoke instanceof Invoke.Virtual && invoke.operandCount() == 1 && invoke.returnsInt() && invoke.nameMatchesRegex(atomicIncRegex)) {
                 if (invoke.resultFromOperandNOrThrow(0) instanceof Op.Result instanceResult) {
                     atomicInc( instanceResult,
                             ((Regex.Match)atomicIncRegex.is(invoke.name())).stringOf(1) // atomicXXInc -> atomicXX
                     );
                 }
-            } else if (invoke.isInstance() && invoke.resultFromOperandNOrThrow(0) instanceof Op.Result instance) {
-                parenWhen(
-                        invoke.operandCount() > 1
-                                && invoke(scopedCodeBuilderContext().lookup(),instance.op()) instanceof Invoke invoke0
-                                && invoke0.returnsClassType()
-                        ,
-                        // When we have patterns like:
-                        //
-                        // myiFaceArray.array().value(storeAValue);
-                        //
-                        // We need to generate extra parenthesis to make the struct pointer accessor "->" correct.
-                        // This is a common pattern when we have a IFace type that contains a subtype based on
-                        // struct or union.
-                        // An example of this is for the type F16Array.
-                        // The following expression checks that the current invokeOp has at least 2 operands:
-                        // Why 2?
-                        // - The first one is another invokeOp to load the inner struct from an IFace data structure.
-                        //   The first operand is also assignable.
-                        // - The second one is the store value, but this depends on the semantics and definition
-                        //   of the user code.
-                        _->{
-                            when(invoke.returnsClassType(), _ -> ampersand());
-                            recurse( instance.op());
-                        });
+            } else if (invoke instanceof Invoke.Virtual && invoke.resultFromOperandNOrThrow(0) instanceof Op.Result instance) {
 
-                // Check if the varOpLoad that could follow corresponds to a local/private type
-                boolean isLocalOrPrivateDS = (instance.op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp
-                        && scopedCodeBuilderContext().resolve(varLoadOp.operands().getFirst()) instanceof HATMemoryVarOp);
+                // Attention: Since F16.toFloat operations are supported, it should be possible to
+                // implement a load from global memory from an F16Array and directly use it for a math operation.
+                // In this case, we need to add an extra parenthesis.
+                SequencedSet<Op.Result> uses = invokeOp.result().uses();
+                boolean narrowTypeCast = uses.stream().anyMatch(node -> node.op() instanceof HATF16Op.HATF16ToFloatConvOp);
 
-                either(isLocalOrPrivateDS, CodeBuilder::dot, CodeBuilder::rarrow);
+                parenWhen(narrowTypeCast, _ -> {
+                    parenWhen(
+                            invoke.operandCount() > 1
+                                    && invoke(scopedCodeBuilderContext().lookup(), instance.op()) instanceof Invoke invoke0
+                                    && invoke0.returnsClassType()
+                            ,
+                            // When we have patterns like:
+                            //
+                            // myiFaceArray.array().value(storeAValue);
+                            //
+                            // We need to generate extra parenthesis to make the struct pointer accessor "->" correct.
+                            // This is a common pattern when we have a IFace type that contains a subtype based on
+                            // struct or union.
+                            // An example of this is for the type F16Array.
+                            // The following expression checks that the current invokeOp has at least 2 operands:
+                            // Why 2?
+                            // - The first one is another invokeOp to load the inner struct from an IFace data structure.
+                            //   The first operand is also assignable.
+                            // - The second one is the store value, but this depends on the semantics and definition
+                            //   of the user code.
+                            _ -> {
+                                when(invoke.returnsClassType(), _ -> ampersand());
+                                recurse(instance.op());
+                            });
 
-                funcName(invoke.op());
+                    // Check if the varOpLoad that could follow corresponds to a local/private type
+                    boolean isLocalOrPrivateDS = (instance.op() instanceof CoreOp.VarAccessOp.VarLoadOp varLoadOp
+                            && scopedCodeBuilderContext().resolve(varLoadOp.operands().getFirst()) instanceof HATMemoryVarOp);
+                    either(isLocalOrPrivateDS, CodeBuilder::dot, CodeBuilder::rarrow);
 
-                if (invoke.returnsVoid()) {//   setter
-                    switch (invoke.operandCount()) {
-                        case 2 -> {
-                            if (invoke.opFromOperandNOrNull(1) instanceof Op op) {
-                                equals().recurse( op);
+                    funcName(invoke.op());
+
+                    if (invoke.returnsVoid()) {//   setter
+                        switch (invoke.operandCount()) {
+                            case 2 -> {
+                                if (invoke.opFromOperandNOrNull(1) instanceof Op op) {
+                                    equals().recurse(op);
+                                }
                             }
-                        }
-                        case 3-> {
-                            if ( invoke.opFromOperandNOrThrow(1) instanceof Op op1
-                                    && invoke.opFromOperandNOrThrow(2) instanceof Op op2) {
-                                sbrace(_ -> recurse( op1)).equals().recurse( op2);
+                            case 3 -> {
+                                if (invoke.opFromOperandNOrThrow(1) instanceof Op op1
+                                        && invoke.opFromOperandNOrThrow(2) instanceof Op op2) {
+                                    sbrace(_ -> recurse(op1)).equals().recurse(op2);
+                                }
                             }
+                            default -> throw new IllegalStateException("How ");
                         }
-                        default -> throw new IllegalStateException("How ");
+                    } else {
+                        if (invoke.opFromOperandNOrNull(1) instanceof Op op) {
+                            sbrace(_ -> recurse(op));
+                        } else {
+                            // this is just call.
+                        }
                     }
-                } else {
-                    if (invoke.opFromOperandNOrNull(1) instanceof Op op) {
-                        sbrace(_ -> recurse( op));
-                    }else{
-                        // this is just call.
-                    }
-                }
+                });
             }
-        } else {// General case
-            funcName(invoke.op()).paren(_ ->
-                    commaSpaceSeparated(invoke.op().operands(),
-                            op -> {if (op instanceof Op.Result result) {recurse( result.op());}
-                            })
-            );
-        }
+        } else if (!invoke.returnsVoid() && HATPhaseUtils.isInvokeFromMathLib(invoke)) {
+                // codegen for the math operation
+                generateMathIntrinsicOperation(invoke);
+            } else {
+                funcName(invoke.op()).paren(_ ->
+                        commaSpaceSeparated(invoke.op().operands(),
+                                op -> {
+                                    if (op instanceof Op.Result result) {
+                                        recurse(result.op());
+                                    }
+                                })
+                );
+            }
+
         return self();
     }
 
+    protected void genFieldAccess(Value operand, boolean isReference) {
+        if (isReference) {
+            rarrow().id(VALUE);
+        } else if (!OpHelper.isPrimitiveResult(operand)) {
+            dot().id(VALUE);
+        }
+    }
+
+    private void generateMathIntrinsicOperation(Invoke invoke) {
+        // Obtain if the resulting type is a narrowed-type (e.g., bfloat16, or half float)
+        final ReducedFloatType reducedFloatType = HATFP16Phase.categorizeReducedFloatFromResult(invoke);
+        if (reducedFloatType != null) {
+            // If special type, then we need to build the type
+            // For now this applies to F16 and bFloat16
+            paren(_ -> genReducedType(reducedFloatType)).obrace();
+        }
+        id(mapMathIntrinsic(invoke.name()));
+
+        // For each operand, obtain if it is a reference from global memory or device memory.
+        List<Boolean> referenceList = IntStream.range(0, invoke.op().operands().size())
+                .mapToObj(i -> HATPhaseUtils.isArrayReference(lookup(), invoke.op().operands().get(i)))
+                .collect(Collectors.toList());
+
+        paren( _ -> {
+            int[] counter = new int[] {0};
+            commaSpaceSeparated(invoke.op().operands(), op -> {
+                recurse(OpHelper.asResultOrThrow(op).op());
+                if (reducedFloatType != null) {
+                    genFieldAccess(op, referenceList.get(counter[0]++));
+                }
+            });
+        });
+        if (reducedFloatType != null) {
+            cbrace();
+        }
+    }
+
+    protected abstract String mapMathIntrinsic(String name);
 }

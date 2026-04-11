@@ -37,7 +37,7 @@ import hat.buffer.F32Array;
 import hat.buffer.F32ArrayPadded;
 import hat.types.Float4;
 import hat.device.DeviceSchema;
-import hat.device.DeviceType;
+import hat.device.NonMappableIface;
 import hat.test.annotation.HatTest;
 import hat.test.exceptions.HATAssertionError;
 import hat.test.exceptions.HATAsserts;
@@ -47,15 +47,14 @@ import jdk.incubator.code.Reflect;
 import java.lang.invoke.MethodHandles;
 import java.util.Random;
 
-import static optkl.ifacemapper.MappableIface.RO;
-import static optkl.ifacemapper.MappableIface.RW;
+import static optkl.ifacemapper.MappableIface.*;
 
 public class TestMatMul {
 
     private static final int SIZE = 256;
 
     @Reflect
-    public static void matrixMultiplyKernel2D(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiplyKernel2D(KernelContext kc, F32Array matrixA, F32Array matrixB, F32Array matrixC, int size) {
         if (kc.gix < kc.gsx) {
             if (kc.giy < kc.gsy) {
                 float acc = 0.0f;
@@ -68,7 +67,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiplyKernel2DLI(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiplyKernel2DLI(KernelContext kc, F32Array matrixA, F32Array matrixB, F32Array matrixC, int size) {
         if (kc.gix < kc.gsx) {
             if (kc.giy < kc.gsy) {
                 float acc = 0.0f;
@@ -81,7 +80,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiplyKernel2DLIF16(@RO KernelContext kc, @RO F16Array matrixA, @RO F16Array matrixB, @RW F16Array matrixC, int size) {
+    public static void matrixMultiplyKernel2DLIF16(KernelContext kc, F16Array matrixA, F16Array matrixB, F16Array matrixC, int size) {
         if (kc.gix < kc.gsx) {
             if (kc.giy < kc.gsy) {
                 F16 acc = F16.of(0.0f);
@@ -97,11 +96,12 @@ public class TestMatMul {
         }
     }
 
-    private interface MyLocalArrayFixedSize extends DeviceType {
+    private interface MyLocalArrayFixedSize extends NonMappableIface {
         void array(long index, float value);
+
         float array(long index);
 
-        DeviceSchema<MyLocalArrayFixedSize> schema = DeviceSchema.of(MethodHandles.lookup(),null,MyLocalArrayFixedSize.class,
+        DeviceSchema<MyLocalArrayFixedSize> schema = DeviceSchema.of(MyLocalArrayFixedSize.class,
                 myPrivateArray -> myPrivateArray
                         .withArray("array", 256));
 
@@ -115,7 +115,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiplyKernel2DTiling(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiplyKernel2DTiling(KernelContext kc, F32Array matrixA, F32Array matrixB, F32Array matrixC, int size) {
 
         final int tileSize = 16;
         MyLocalArrayFixedSize tileA = MyLocalArrayFixedSize.createLocal();
@@ -132,7 +132,7 @@ public class TestMatMul {
 
         // Compute matrix-vector and accumulate the result over the tiles
         float sum = 0.0f;
-        for (int tile = 0; tile < (size/tileSize); tile++) {
+        for (int tile = 0; tile < (size / tileSize); tile++) {
             // Copy from global to shared memory
             tileA.array((long) localIdy * tileSize + localIdx, matrixA.array((long) row * size + tile * tileSize + localIdx));
             tileB.array((long) localIdy * tileSize + localIdx, matrixB.array((tile * tileSize + localIdy) * size + col));
@@ -157,7 +157,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static float compute(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, int size, int j) {
+    public static float compute(KernelContext kc, F32Array matrixA, F32Array matrixB, int size, int j) {
         float acc = 0.0f;
         for (int k = 0; k < size; k++) {
             acc += (matrixA.array(kc.gix * size + k) * matrixB.array(k * size + j));
@@ -166,7 +166,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiplyKernel1D(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiplyKernel1D(KernelContext kc, F32Array matrixA, F32Array matrixB, F32Array matrixC, int size) {
         if (kc.gix < kc.gsx) {
             for (int j = 0; j < size; j++) {
                 float acc = 0.0f;
@@ -179,7 +179,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiplyKernel1DWithFunctionCalls(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiplyKernel1DWithFunctionCalls(KernelContext kc, F32Array matrixA, F32Array matrixB, F32Array matrixC, int size) {
         if (kc.gix < kc.gsx) {
             for (int j = 0; j < size; j++) {
                 float acc = compute(kc, matrixA, matrixB, size, j);
@@ -189,7 +189,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiply1D(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int globalSize) {
+    public static void matrixMultiply1D(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @WO F32Array matrixC, int globalSize) {
         cc.dispatchKernel(NDRange.of1D(globalSize,16),
                 kc -> matrixMultiplyKernel1D(kc, matrixA, matrixB, matrixC, globalSize)
         );
@@ -198,36 +198,36 @@ public class TestMatMul {
     final static int BLOCK_SIZE = 16;
 
     @Reflect
-    public static void matrixMultiply1DWithFunctionCalls(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiply1DWithFunctionCalls(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @WO F32Array matrixC, int size) {
         cc.dispatchKernel(NDRange.of1D(size),
                 kc -> matrixMultiplyKernel1DWithFunctionCalls(kc, matrixA, matrixB, matrixC, size)
         );
     }
 
     @Reflect
-    public static void matrixMultiply2D(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int globalSize) {
+    public static void matrixMultiply2D(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @WO F32Array matrixC, int globalSize) {
         cc.dispatchKernel(NDRange.of2D(globalSize, globalSize,BLOCK_SIZE, BLOCK_SIZE),
                 kc -> matrixMultiplyKernel2D(kc, matrixA, matrixB, matrixC, globalSize)
         );
     }
 
     @Reflect
-    public static void matrixMultiply2DLI(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int globalSize) {
+    public static void matrixMultiply2DLI(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @WO F32Array matrixC, int globalSize) {
           cc.dispatchKernel(NDRange.of2D(globalSize, globalSize,BLOCK_SIZE, BLOCK_SIZE),
                 kc -> matrixMultiplyKernel2DLI(kc, matrixA, matrixB, matrixC, globalSize)
         );
     }
 
     @Reflect
-    public static void matrixMultiply2DLIF16(@RO ComputeContext cc, @RO F16Array matrixA, @RO F16Array matrixB, @RW F16Array matrixC, int globalSize) {
-          cc.dispatchKernel(NDRange.of2D(globalSize, globalSize,BLOCK_SIZE, BLOCK_SIZE),
+    public static void matrixMultiply2DLIF16(@RO ComputeContext cc, @RO F16Array matrixA, @RO F16Array matrixB, @WO F16Array matrixC, int globalSize) {
+        cc.dispatchKernel(NDRange.of2D(globalSize, globalSize, BLOCK_SIZE, BLOCK_SIZE),
                 kc -> matrixMultiplyKernel2DLIF16(kc, matrixA, matrixB, matrixC, globalSize)
         );
     }
 
     @Reflect
-    public static void matrixMultiply2DTiling(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int globalSize) {
-          cc.dispatchKernel(NDRange.of2D(globalSize, globalSize,BLOCK_SIZE, BLOCK_SIZE),
+    public static void matrixMultiply2DTiling(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @WO F32Array matrixC, int globalSize) {
+        cc.dispatchKernel(NDRange.of2D(globalSize, globalSize, BLOCK_SIZE, BLOCK_SIZE),
                 kc -> matrixMultiplyKernel2DTiling(kc, matrixA, matrixB, matrixC, globalSize)
         );
     }
@@ -506,42 +506,55 @@ public class TestMatMul {
         }
     }
 
-    private interface SharedMemory extends DeviceType {
+    private interface SharedMemory extends NonMappableIface {
         void array(long index, float value);
+
         float array(long index);
-        DeviceSchema<SharedMemory> schema = DeviceSchema.of(MethodHandles.lookup(),null,SharedMemory.class,
+
+        DeviceSchema<SharedMemory> schema = DeviceSchema.of(SharedMemory.class,
                 arr -> arr.withArray("array", 1024));
+
         static SharedMemory create(Accelerator accelerator) {
             return null;
         }
+
         static SharedMemory createLocal() {
             return null;
         }
+
         default void storeFloat4View(Float4 float4, int index) {
         }
     }
 
-    private interface PrivateArray extends DeviceType {
+    private interface PrivateArray extends NonMappableIface {
         void array(long index, float value);
+
         float array(long index);
-        DeviceSchema<PrivateArray> schema = DeviceSchema.of(MethodHandles.lookup(),null,PrivateArray.class,
+
+        DeviceSchema<PrivateArray> schema = DeviceSchema.of(PrivateArray.class,
                 arr -> arr.withArray("array", 16));
+
         static PrivateArray create(Accelerator accelerator) {
             return null;
         }
+
         static PrivateArray createPrivate() {
             return null;
         }
     }
 
-    private interface FlatPrivate extends DeviceType {
+    private interface FlatPrivate extends NonMappableIface {
         void array(long index, float value);
+
         float array(long index);
-        DeviceSchema<FlatPrivate> schema = DeviceSchema.of(MethodHandles.lookup(),null,FlatPrivate.class,
+
+        DeviceSchema<FlatPrivate> schema = DeviceSchema.of(FlatPrivate.class,
                 arr -> arr.withArray("array", 4));
+
         static FlatPrivate create(Accelerator accelerator) {
             return null;
         }
+
         static FlatPrivate createPrivate() {
             return null;
         }
@@ -549,7 +562,7 @@ public class TestMatMul {
 
     // Code ported from the HAT example module.
     @Reflect
-    public static void matrixMultiplyKernel2DRegisterTiling(@RO KernelContext kc, @RO F32Array matrixA, @RO F32Array matrixB, @RW F32Array matrixC, int size) {
+    public static void matrixMultiplyKernel2DRegisterTiling(KernelContext kc, F32Array matrixA, F32Array matrixB, F32Array matrixC, int size) {
 
         // Configuration for the kernel: Keep in mind that if you change the following parameters,
         // also change the scheduling (global and local work sizes).
@@ -622,10 +635,10 @@ public class TestMatMul {
             for (int dotIdx = 0; dotIdx < BK; dotIdx++) {
                 // block into registers
                 for (int i = 0; i < TM; i++) {
-                    regM.array(i,  tileA.array((threadRow * TM + i) * BK + dotIdx));
+                    regM.array(i, tileA.array((threadRow * TM + i) * BK + dotIdx));
                 }
                 for (int i = 0; i < TN; i++) {
-                    regN.array(i,  tileB.array(dotIdx * BN + threadCol * TN + i));
+                    regN.array(i, tileB.array(dotIdx * BN + threadCol * TN + i));
                 }
                 for (int resIdxM = 0; resIdxM < TM; resIdxM++) {
                     for (int resIdxN = 0; resIdxN < TN; resIdxN++) {
@@ -651,11 +664,11 @@ public class TestMatMul {
 
     // Code ported from the HAT example module.
     @Reflect
-    public static void matrixMultiplyKernel2DRegisterTilingVectorized(@RO KernelContext kc, @RO F32ArrayPadded matrixA, @RO F32ArrayPadded matrixB, @RW F32ArrayPadded matrixC, int size) {
+    public static void matrixMultiplyKernel2DRegisterTilingVectorized(KernelContext kc, F32ArrayPadded matrixA, F32ArrayPadded matrixB, F32ArrayPadded matrixC, int size) {
 
         // Configuration for the kernel: Keep in mind that if you change the following parameters,
         // also change the scheduling (global and local work sizes).
-      //  final int M = size;
+        //  final int M = size;
         final int N = size;
         final int K = size;
         final int BM = 64;
@@ -723,10 +736,10 @@ public class TestMatMul {
             for (int dotIdx = 0; dotIdx < BK; dotIdx++) {
                 // block into registers
                 for (int i = 0; i < TM; i++) {
-                    regM.array(i,  tileA.array(dotIdx * BM + threadRow * TM + i));
+                    regM.array(i, tileA.array(dotIdx * BM + threadRow * TM + i));
                 }
                 for (int i = 0; i < TN; i++) {
-                    regN.array(i,  tileB.array(dotIdx * (BN + extraCols) + threadCol * TN + i));
+                    regN.array(i, tileB.array(dotIdx * (BN + extraCols) + threadCol * TN + i));
                 }
                 for (int resIdxM = 0; resIdxM < TM; resIdxM++) {
                     for (int resIdxN = 0; resIdxN < TN; resIdxN++) {
@@ -751,14 +764,14 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiply2DRegisterTiling(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @RW  F32Array matrixC, final int size) {
+    public static void matrixMultiply2DRegisterTiling(@RO ComputeContext cc, @RO F32Array matrixA, @RO F32Array matrixB, @WO  F32Array matrixC, final int size) {
         cc.dispatchKernel(NDRange.of2D(256, 256,16, 16),
                 kc -> matrixMultiplyKernel2DRegisterTiling(kc, matrixA, matrixB, matrixC, size)
         );
     }
 
     @Reflect
-    public static void matrixMultiply2DRegisterTilingVectorized(@RO ComputeContext cc, @RO F32ArrayPadded matrixA, @RO F32ArrayPadded matrixB, @RW  F32ArrayPadded matrixC, final int size) {
+    public static void matrixMultiply2DRegisterTilingVectorized(@RO ComputeContext cc, @RO F32ArrayPadded matrixA, @RO F32ArrayPadded matrixB, @WO  F32ArrayPadded matrixC, final int size) {
         cc.dispatchKernel(NDRange.of2D(256, 256,16, 16),
                 kc -> matrixMultiplyKernel2DRegisterTilingVectorized(kc, matrixA, matrixB, matrixC, size)
         );
@@ -834,10 +847,10 @@ public class TestMatMul {
         }
     }
 
-    private interface SharedMemoryHalf extends DeviceType {
+    private interface SharedMemoryHalf extends NonMappableIface {
         F16 array(int index);
 
-        DeviceSchema<SharedMemoryHalf> schema = DeviceSchema.of(MethodHandles.lookup(),null,SharedMemoryHalf.class,
+        DeviceSchema<SharedMemoryHalf> schema = DeviceSchema.of(SharedMemoryHalf.class,
                 arr -> arr.withArray("array", 1024)
                         .withDeps(F16.class, half -> half.withField("value")));
 
@@ -850,10 +863,10 @@ public class TestMatMul {
         }
     }
 
-    private interface PrivateArrayHalf extends DeviceType {
+    private interface PrivateArrayHalf extends NonMappableIface {
         F16 array(int index);
 
-        DeviceSchema<PrivateArrayHalf> schema = DeviceSchema.of(MethodHandles.lookup(),null,PrivateArrayHalf.class,
+        DeviceSchema<PrivateArrayHalf> schema = DeviceSchema.of(PrivateArrayHalf.class,
                 arr -> arr.withArray("array", 16)
                         .withDeps(F16.class, half -> half.withField("value")));
 
@@ -866,10 +879,10 @@ public class TestMatMul {
         }
     }
 
-    private interface FlatPrivateHalf extends DeviceType {
+    private interface FlatPrivateHalf extends NonMappableIface {
         F16 array(int index);
 
-        DeviceSchema<FlatPrivateHalf> schema = DeviceSchema.of(MethodHandles.lookup(),null,FlatPrivateHalf.class,
+        DeviceSchema<FlatPrivateHalf> schema = DeviceSchema.of(FlatPrivateHalf.class,
                 arr -> arr.withArray("array", 4)
                         .withDeps(F16.class, half -> half.withField("value")));
 
@@ -884,7 +897,7 @@ public class TestMatMul {
 
     // Taking from the HAT Examples module
     @Reflect
-    public static void matrixMultiplyKernel2DRegisterTilingHalf(@RO KernelContext kc, @RO F16Array matrixA, @RO F16Array matrixB, @RW F16Array matrixC, int size) {
+    public static void matrixMultiplyKernel2DRegisterTilingHalf(KernelContext kc, F16Array matrixA, F16Array matrixB, F16Array matrixC, int size) {
         final int BM = 64;
         final int BN = 64;
         final int BK = 16;
@@ -972,10 +985,10 @@ public class TestMatMul {
         }
     }
 
-    private interface SharedMemoryBfloat16 extends DeviceType {
+    private interface SharedMemoryBfloat16 extends NonMappableIface {
         BF16 array(int index);
 
-        DeviceSchema<SharedMemoryBfloat16> schema = DeviceSchema.of(MethodHandles.lookup(),null,SharedMemoryBfloat16.class,
+        DeviceSchema<SharedMemoryBfloat16> schema = DeviceSchema.of(SharedMemoryBfloat16.class,
                 arr -> arr.withArray("array", 1024)
                         .withDeps(BF16.class, half -> half.withField("value")));
 
@@ -988,10 +1001,10 @@ public class TestMatMul {
         }
     }
 
-    private interface PrivateArrayBfloat16 extends DeviceType {
+    private interface PrivateArrayBfloat16 extends NonMappableIface {
         BF16 array(int index);
 
-        DeviceSchema<PrivateArrayBfloat16> schema = DeviceSchema.of(MethodHandles.lookup(),null,PrivateArrayBfloat16.class,
+        DeviceSchema<PrivateArrayBfloat16> schema = DeviceSchema.of(PrivateArrayBfloat16.class,
                 arr -> arr.withArray("array", 16)
                         .withDeps(BF16.class, half -> half.withField("value")));
 
@@ -1004,10 +1017,10 @@ public class TestMatMul {
         }
     }
 
-    private interface FlatPrivateBfloat16 extends DeviceType {
+    private interface FlatPrivateBfloat16 extends NonMappableIface {
         BF16 array(int index);
 
-        DeviceSchema<FlatPrivateBfloat16> schema = DeviceSchema.of(MethodHandles.lookup(),null,FlatPrivateBfloat16.class,
+        DeviceSchema<FlatPrivateBfloat16> schema = DeviceSchema.of(FlatPrivateBfloat16.class,
                 arr -> arr.withArray("array", 4)
                         .withDeps(BF16.class, half -> half.withField("value")));
 
@@ -1021,7 +1034,7 @@ public class TestMatMul {
     }
 
     @Reflect
-    public static void matrixMultiplyKernel2DRegisterTilingBFloat16(@RO KernelContext kc, @RO BF16Array matrixA, @RO BF16Array matrixB, @RW BF16Array matrixC, int size) {
+    public static void matrixMultiplyKernel2DRegisterTilingBFloat16(KernelContext kc, BF16Array matrixA, BF16Array matrixB, BF16Array matrixC, int size) {
         final int BM = 64;
         final int BN = 64;
         final int BK = 16;
@@ -1111,14 +1124,14 @@ public class TestMatMul {
 
     @Reflect
     public static void matrixMultiply2DRegisterTilingHalf(@RO ComputeContext cc, @RO F16Array matrixA, @RO F16Array matrixB, @RW F16Array matrixC, int globalSize) {
-        cc.dispatchKernel(NDRange.of2D(256, 256,16, 16),
+        cc.dispatchKernel(NDRange.of2D(256, 256, 16, 16),
                 kc -> matrixMultiplyKernel2DRegisterTilingHalf(kc, matrixA, matrixB, matrixC, globalSize)
         );
     }
 
     @Reflect
     public static void matrixMultiply2DRegisterTilingBFloat16(@RO ComputeContext cc, @RO BF16Array matrixA, @RO BF16Array matrixB, @RW BF16Array matrixC, int globalSize) {
-        cc.dispatchKernel(NDRange.of2D(256, 256,16, 16),
+        cc.dispatchKernel(NDRange.of2D(256, 256, 16, 16),
                 kc -> matrixMultiplyKernel2DRegisterTilingBFloat16(kc, matrixA, matrixB, matrixC, globalSize)
         );
     }
@@ -1154,8 +1167,8 @@ public class TestMatMul {
             for (int j = 0; j < size; j++) {
                 try {
                     HATAsserts.assertEquals(F16.f16ToFloat(resultSeq.array(i * size + j)),
-                                        F16.f16ToFloat(matrixC.array(i * size + j)),
-                                        0.01f);
+                            F16.f16ToFloat(matrixC.array(i * size + j)),
+                            0.01f);
                 } catch (HATAssertionError hatAssertionError) {
                     throw new HATExpectedPrecisionError(hatAssertionError.getMessage());
                 }

@@ -70,11 +70,11 @@ public class OpenCLBackend extends C99JExtractedBackend {
     public void dispatchKernel(KernelCallGraph kernelCallGraph, KernelContext kernelContext, Object... args) {
         //System.out.println("OpenCL backend dispatching kernel " + kernelCallGraph.entrypoint.method);
         CompiledKernel compiledKernel = kernelCallGraphCompiledCodeMap.computeIfAbsent(kernelCallGraph, (_) -> {
-            String code = createCode(kernelCallGraph, new OpenCLJExtractedHATKernelBuilder(new ScopedCodeBuilderContext(kernelCallGraph.lookup(),kernelCallGraph.entrypoint.funcOp())), args);
+            String code = createCode(kernelCallGraph, new OpenCLJExtractedHATKernelBuilder(kernelCallGraph.state,new ScopedCodeBuilderContext(kernelCallGraph.lookup(),kernelCallGraph.entrypoint.funcOp())), args);
             System.out.println(code);
             long programHandle = compileProgram(code);
             if (programOK(programHandle)) {
-                long kernelHandle = getKernel(programHandle, kernelCallGraph.entrypoint.method.getName());
+                long kernelHandle = getKernel(programHandle, kernelCallGraph.entrypoint.name());
                 return new CompiledKernel(this, kernelCallGraph, code, kernelHandle, args);
             } else {
                 throw new IllegalStateException("opencl failed to compile ");

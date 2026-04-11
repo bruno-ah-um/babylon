@@ -1,0 +1,233 @@
+/*
+ * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+
+/*
+ * @test
+ * @modules jdk.incubator.code
+ * @library lib
+ * @run junit TestBreakContinue
+ * @run main Unreflect TestBreakContinue
+ * @run junit TestBreakContinue
+ */
+
+import jdk.incubator.code.Reflect;
+import jdk.incubator.code.CodeTransformer;
+import jdk.incubator.code.Op;
+import jdk.incubator.code.dialect.core.CoreOp;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.Method;
+import java.util.BitSet;
+import java.util.Optional;
+import java.util.function.IntUnaryOperator;
+import java.util.stream.Stream;
+
+public class TestBreakContinue {
+
+    @Reflect
+    public static BitSet forLoopBreakContinue(IntUnaryOperator f) {
+        BitSet b = new BitSet();
+        for (int i = 0; i < 8; i++) {
+            b.set(i);
+            int r = f.applyAsInt(i);
+            if (r == 0) {
+                continue;
+            } else if (r == 1) {
+                break;
+            }
+            b.set(i * 2);
+        }
+        return b;
+    }
+
+    @Test
+    public void testForLoopBreakContinue() {
+        CoreOp.FuncOp f = getFuncOp("forLoopBreakContinue");
+
+        System.out.println(f.toText());
+
+        CoreOp.FuncOp lf = f.transform(CodeTransformer.LOWERING_TRANSFORMER);
+
+        System.out.println(lf.toText());
+
+        IntUnaryOperator o = i -> {
+            if (i <= 3) return -1;
+            if (i <= 5) return 0;
+            return 1;
+        };
+        Assertions.assertEquals(forLoopBreakContinue(o), Interpreter.invoke(MethodHandles.lookup(), lf, o));
+    }
+
+    @Reflect
+    public static BitSet nestedForLoopBreakContinue(IntUnaryOperator f) {
+        BitSet b = new BitSet();
+        for (int j = 0; j < 8; j++) {
+            b.set(j);
+            int r = f.applyAsInt(j);
+            if (r == 0) {
+                continue;
+            } else if (r == 1) {
+                break;
+            }
+            for (int i = 8; i < 16; i++) {
+                b.set(i);
+                r = f.applyAsInt(i);
+                if (r == 2) {
+                    continue;
+                } else if (r == 3) {
+                    break;
+                }
+                b.set(i * 2);
+            }
+            b.set(j * 2);
+        }
+        return b;
+    }
+
+    @Test
+    public void testNestedForLoopBreakContinue() {
+        CoreOp.FuncOp f = getFuncOp("nestedForLoopBreakContinue");
+
+        System.out.println(f.toText());
+
+        CoreOp.FuncOp lf = f.transform(CodeTransformer.LOWERING_TRANSFORMER);
+
+        System.out.println(lf.toText());
+
+        for (int r = -1; r < 4; r++) {
+            int fr = r;
+            IntUnaryOperator o = i -> fr;
+            Assertions.assertEquals(nestedForLoopBreakContinue(o), Interpreter.invoke(MethodHandles.lookup(), lf, o));
+        }
+    }
+
+
+    @Reflect
+    public static BitSet forLoopLabeledBreakContinue(IntUnaryOperator f) {
+        BitSet b = new BitSet();
+        outer: for (int j = 0; j < 8; j++) {
+            b.set(j);
+            int r = f.applyAsInt(j);
+            if (r == 0) {
+                continue outer;
+            } else if (r == 1) {
+                break outer;
+            }
+            inner: for (int i = 8; i < 16; i++) {
+                b.set(i);
+                r = f.applyAsInt(i);
+                if (r == 2) {
+                    continue inner;
+                } else if (r == 3) {
+                    break inner;
+                } else if (r == 4) {
+                    continue outer;
+                } else if (r == 5) {
+                    break outer;
+                }
+                b.set(i * 2);
+            }
+            b.set(j * 2);
+        }
+        return b;
+    }
+
+    @Test
+    public void testForLoopLabeledBreakContinue() {
+        CoreOp.FuncOp f = getFuncOp("forLoopLabeledBreakContinue");
+
+        System.out.println(f.toText());
+
+        CoreOp.FuncOp lf = f.transform(CodeTransformer.LOWERING_TRANSFORMER);
+
+        System.out.println(lf.toText());
+
+        for (int r = -1; r < 6; r++) {
+            int fr = r;
+            IntUnaryOperator o = i -> fr;
+            Assertions.assertEquals(forLoopLabeledBreakContinue(o), Interpreter.invoke(MethodHandles.lookup(), lf, o));
+        }
+    }
+
+    @Reflect
+    public static BitSet blockBreak(IntUnaryOperator f) {
+        BitSet b = new BitSet();
+        a: b: {
+            b.set(1);
+            if (f.applyAsInt(1) != 0) {
+                break a;
+            }
+            b.set(2);
+            if (f.applyAsInt(2) != 0) {
+                break b;
+            }
+            b.set(3);
+            c: {
+                b.set(4);
+                if (f.applyAsInt(4) != 0) {
+                    break a;
+                }
+                b.set(5);
+                if (f.applyAsInt(5) != 0) {
+                    break b;
+                }
+                b.set(6);
+                if (f.applyAsInt(6) != 0) {
+                    break c;
+                }
+                b.set(7);
+            }
+            b.set(8);
+        }
+        return b;
+    }
+
+    @Test
+    public void testBlockBreak() {
+        CoreOp.FuncOp f = getFuncOp("blockBreak");
+
+        System.out.println(f.toText());
+
+        CoreOp.FuncOp lf = f.transform(CodeTransformer.LOWERING_TRANSFORMER);
+
+        System.out.println(lf.toText());
+
+        for (int i = 0; i < 7; i++) {
+            int fi = i;
+            IntUnaryOperator o = v -> v == fi ? 1 : 0;
+            Assertions.assertEquals(blockBreak(o), Interpreter.invoke(MethodHandles.lookup(), lf, o));
+        }
+    }
+
+
+    static CoreOp.FuncOp getFuncOp(String name) {
+        Optional<Method> om = Stream.of(TestBreakContinue.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals(name))
+                .findFirst();
+
+        Method m = om.get();
+        return Op.ofMethod(m).get();
+    }
+}

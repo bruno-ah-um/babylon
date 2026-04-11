@@ -184,7 +184,7 @@ public class Trxfmr implements LookupCarrier{
         }
         static Cursor of(Trxfmr trxfmr, CoreOp.FuncOp funcOp, Block.Builder builder, Op op){
 
-            // This could be a record if we did ot have to mutate action and handled. Maybe a Set?
+            // This could be a record if we did not have to mutate action and handled. Maybe a Set?
             class Impl  implements Cursor {
                 private CoreOp.FuncOp funcOp;
                 private Op op;
@@ -253,12 +253,14 @@ public class Trxfmr implements LookupCarrier{
                     return result;
                 }
                 public Op.Result add(Op newOne, Consumer<Mapper<?>> mapperConsumer) {
-                    handled(true);
+                    handled(true); // is this appropriate here?
                     action(Action.ADDED);
                     var result = trxfmr.opToResultOp(op(),builder().op(OpHelper.copyLocation(op(), newOne)));
                     if (result.type() instanceof PrimitiveType primitiveType && primitiveType.isVoid()) {
+
                     }else{
-                        mapperConsumer.accept(Mapper.of(this).map(op().result(), result));
+                     //   System.out.println("sidestepping txfrme add mapping ");
+                   //     mapperConsumer.accept(Mapper.of(this).map(op().result(), result));
                     }
                     return result;
                 }
@@ -377,15 +379,23 @@ public class Trxfmr implements LookupCarrier{
         if (callSite != null && callSite.tracing()) {
             System.out.println(callSite);
         }
-        var newFuncOp = funcOp().transform(name,(blockBuilder, op) -> {
-            if (predicate.test(op)){
-                Cursor cursor = Cursor.of(this, funcOp, blockBuilder,op);
+        var newFuncOp = funcOp().transform(name,(blockBuilder, cursorOp) -> {
+            if (predicate.test(cursorOp)){
+                Cursor cursor = Cursor.of(this, funcOp, blockBuilder,cursorOp);
                 cursorConsumer.accept(cursor);
                 if (!cursor.handled()){
-                    biMap.add(op,blockBuilder.op(op).op());
+                    var result = blockBuilder.op(cursorOp);
+                    var opFromResult= result.op();
+                    biMap.add(cursorOp,opFromResult);
                 }
             } else {
-                biMap.add(op,blockBuilder.op(op).op());
+                try {
+                    var result = blockBuilder.op(cursorOp);
+                    var opFromResult = result.op();
+                    biMap.add(cursorOp, opFromResult);
+                }catch (Throwable t){
+                    throw new RuntimeException(t);
+                }
             }
             return blockBuilder;
         });

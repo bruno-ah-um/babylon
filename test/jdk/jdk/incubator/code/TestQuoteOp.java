@@ -1,0 +1,558 @@
+import jdk.incubator.code.*;
+import jdk.incubator.code.Reflect;
+import jdk.incubator.code.dialect.core.CoreOp;
+import jdk.incubator.code.dialect.java.JavaOp;
+import jdk.incubator.code.extern.OpParser;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.lang.reflect.Method;
+import java.util.*;
+import java.util.function.IntUnaryOperator;
+
+/*
+ * @test
+ * @modules jdk.incubator.code
+ * @run junit TestQuoteOp
+ */
+public class TestQuoteOp {
+
+    @Reflect
+    public void f(int i) {
+        String s = "abc";
+        Runnable r = () -> {
+            System.out.println(i + s + hashCode());
+        };
+    }
+
+    @Test
+    void testQuoteOpThatHasCaptures() throws NoSuchMethodException {
+        Method f = getClass().getDeclaredMethod("f", int.class);
+        CoreOp.FuncOp fm = Op.ofMethod(f).orElseThrow();
+        Op lop = fm.body().entryBlock().ops().stream().filter(op -> op instanceof JavaOp.LambdaOp).findFirst().orElseThrow();
+
+        CoreOp.FuncOp funcOp = Quoted.embedOp(lop);
+
+        for (String stringArg : new String[] {"a", null}) {
+            Object[] args = new Object[] {1, stringArg, this};
+            Quoted<?> quoted = Quoted.extractOp(funcOp, args);
+            // op must have the same structure as lop
+            // for the moment, we don't have utility to check that
+
+            Assertions.assertTrue(lop.getClass().isInstance(quoted.op()));
+
+            Iterator<Object> iterator = quoted.capturedValues().values().iterator();
+
+            Assertions.assertEquals(args[0], ((CoreOp.Var<?>) iterator.next()).value());
+            Assertions.assertEquals(args[1], ((CoreOp.Var<?>) iterator.next()).value());
+            Assertions.assertEquals(args[2], iterator.next());
+        }
+    }
+
+    @Reflect
+    static void g(String s) {
+        boolean b = s.startsWith("a");
+    }
+
+    @Test
+    void testQuoteOpThatHasOperands() throws NoSuchMethodException { // op with operands
+        Method g = getClass().getDeclaredMethod("g", String.class);
+        CoreOp.FuncOp gm = Op.ofMethod(g).orElseThrow();
+        Op invOp = gm.body().entryBlock().ops().stream().filter(o -> o instanceof JavaOp.InvokeOp).findFirst().orElseThrow();
+
+        CoreOp.FuncOp funcOp = Quoted.embedOp(invOp);
+
+        Object[] args = {"abc", "b"};
+        Quoted<?> quoted = Quoted.extractOp(funcOp, args);
+
+        Assertions.assertTrue(invOp.getClass().isInstance(quoted.op()));
+
+        Iterator<Object> iterator = quoted.operands().values().iterator();
+
+        Assertions.assertEquals(args[0], iterator.next());
+        Assertions.assertEquals(args[1], iterator.next());
+    }
+
+    @Test
+    void testWithJavacModel() {
+        final int y = 88;
+        int z = 99;
+        IntUnaryOperator q = (@Reflect IntUnaryOperator) x -> x + y + z + hashCode();
+
+        // access FuncOp created by javac
+        Quoted<?> quoted = Op.ofLambda(q).orElseThrow();
+        Op op = quoted.op();
+        CoreOp.QuotedOp qop = ((CoreOp.QuotedOp) op.ancestorOp());
+        CoreOp.FuncOp fop = ((CoreOp.FuncOp) qop.ancestorOp());
+
+        Object[] args = {this, 111};
+        Quoted<?> quoted2 = Quoted.extractOp(fop, args);
+
+        Iterator<Object> iterator = quoted2.capturedValues().values().iterator();
+
+        Assertions.assertEquals(y, ((CoreOp.Var<?>) iterator.next()).value());
+        Assertions.assertEquals(args[1], ((CoreOp.Var<?>) iterator.next()).value());
+        Assertions.assertEquals(args[0], iterator.next());
+    }
+
+    static Object[][] invalidCases() {
+        return new Object[][]{
+              // TODO describe error in a comment
+                {
+                        // func op must have one block
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    branch ^block_1;
+
+  ^block_1:
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+        %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+            return;
+        };
+        yield %6;
+    };
+    return %5;
+};
+""", new Object[]{}
+                },
+                {
+              // before last op must be QuotedOp
+              """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    %0 : java.type:"boolean" = constant @false;
+    return %5;
+};
+""", new Object[]{}
+                },
+                {
+                        // last op must be ReturnOp
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    yield %5;
+};
+""", new Object[]{}
+                },
+                {
+                        // the result of QuotedOp must be returned
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    return;
+};
+""", new Object[]{}
+                },
+                {
+                        // the result of QuotedOp must be returned
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"int" = constant @1;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    return %0;
+};
+""", new Object[]{}
+                },
+                {
+                        // param must be used
+                        """
+func @"q" (%0 : java.type:"Object")java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{"s"}
+                },
+                {
+                        // param used more than once, all uses must be as operand or capture of quoted op
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %2 : Var<java.type:"int"> = var %0 @"y";
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+        %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            return %0;
+        };
+        yield %6;
+    };
+    return %5;
+};
+""", new Object[]{1}
+                },
+                {
+                        // param used once by a VarOp, the VarOp must be used
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %2 : Var<java.type:"int"> = var %0 @"y";
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+        %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+            return;
+        };
+        yield %6;
+    };
+    return %5;
+};
+""", new Object[]{2}
+                },
+                {
+                        // param used once by a VarOp, the VarOp must be used as operand or capture
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %1 : Var<java.type:"int"> = var %0 @"y";
+    %2 : Var<Var<java.type:"int">> = var %1 @"z";
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+        %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+            return;
+        };
+        yield %6;
+    };
+    return %5;
+};
+""", new Object[]{3}
+                },
+                {
+                        // operations before quoted op must be ConstantOp or VarOp
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"java.lang.String" = new @java.ref:"java.lang.String::()";
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+           %7 : java.type:"int" = invoke %0 @java.ref:"java.lang.String::length():int";
+           return %7;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{}
+                },
+                {
+                        // constant op must be used
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"int" = constant @1;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{}
+                },
+                {
+                        // constant used more than once, all its uses must be as operand or capture of quoted op
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"int" = constant @1;
+    %1 : Var<java.type:"int"> = var %0 @"y";
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = var.load %1;
+            %8 : java.type:"int" = add %0 %7;
+            return %8;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{}
+                },
+                {
+                        // var op must be initialized with param or result of constant op
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %1 : Var<java.type:"int"> = var @"y";
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = var.load %1;
+            return %7;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{}
+                },
+                {
+                        // model must contain at least two operations
+                        """
+func @"q" (%5 : java.type:"jdk.incubator.code.Quoted")java.type:"jdk.incubator.code.Quoted" -> {
+    return %5;
+};
+""", new Object[]{null}
+                },
+                // args length must be equal to params size
+                {
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            return %0;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{1, 2}
+                }
+      };
+}
+
+
+    @ParameterizedTest
+    @MethodSource("invalidCases")
+    void testInvalidCases(String model, Object[] args) {
+        CoreOp.FuncOp fop = ((CoreOp.FuncOp) OpParser.fromText(JavaOp.JAVA_DIALECT_FACTORY, model).get(0));
+        Assertions.assertThrows(RuntimeException.class, () -> Quoted.extractOp(fop, args));
+    }
+
+    static Object[][] validCases() {
+        return new Object[][] {
+                {
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.lang.Runnable" = lambda ()java.type:"void" -> {
+          return;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {}
+                },
+                {
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            return %0;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {1}
+                },
+                {
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %1 : Var<java.type:"int"> = var %0;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = var.load %1;
+            return %7;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {2}
+                },
+                {
+                        """
+func @"q" (%0 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = add %0 %0;
+            %8 : java.type:"int" = mul %0 %0;
+            %9 : java.type:"int" = sub %8 %7;
+            return %9;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {3}
+                },
+                {
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"int" = constant @1;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            return %0;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {}
+                },
+                {
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"int" = constant @1;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = add %0 %0;
+            %8 : java.type:"int" = mul %0 %0;
+            %9 : java.type:"int" = sub %8 %7;
+            return %9;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {}
+                },
+                {
+                        """
+func @"q" ()java.type:"jdk.incubator.code.Quoted" -> {
+    %0 : java.type:"int" = constant @1;
+    %1 : Var<java.type:"int"> = var %0;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = var.load %1;
+            %8 : java.type:"int" = mul %7 %7;
+            return %8;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[] {}
+                },
+                {
+                        """
+func @"q" (%0 : java.type:"int", %2 : java.type:"int")java.type:"jdk.incubator.code.Quoted" -> {
+    %1 : Var<java.type:"int"> = var %0;
+    %5 : java.type:"jdk.incubator.code.Quoted" = quoted ()java.type:"void" -> {
+      %6 : java.type:"java.util.function.IntSupplier" = lambda ()java.type:"int" -> {
+            %7 : java.type:"int" = var.load %1;
+            %8 : java.type:"int" = add %7 %2;
+            return %8;
+      };
+      yield %6;
+    };
+    return %5;
+};
+""", new Object[]{8, 9}
+                }
+        };
+    }
+
+    @ParameterizedTest
+    @MethodSource("validCases")
+    void testValidCases(String model, Object[] args) {
+        CoreOp.FuncOp fop = ((CoreOp.FuncOp) OpParser.fromText(JavaOp.JAVA_DIALECT_FACTORY, model).get(0));
+        Quoted<?> quoted = Quoted.extractOp(fop, args);
+
+        for (Map.Entry<Value, Object> e : quoted.capturedValues().entrySet()) {
+            Value sv = e.getKey();
+            Object rv = e.getValue();
+            // assert only when captured value is block param, or result of VarOp initialized with block param
+            if (sv instanceof Op.Result opr && opr.op() instanceof CoreOp.VarOp vop
+                    && vop.initOperand() instanceof Block.Parameter p) {
+                Assertions.assertEquals(args[p.index()], ((CoreOp.Var<?>) rv).value());
+            } else if (sv instanceof Block.Parameter p) {
+                Assertions.assertEquals(args[p.index()], rv);
+            }
+        }
+    }
+
+    static Object[][] numParamsCases() {
+        return new Object[][]{
+                {
+                        """
+                func @"f" (%0 : java.type:"int", %1 : java.type:"int")java.type:"void" -> {
+                      %4 : java.type:"int" = add %0 %1;
+                      return;
+                  };
+                """, 2
+                },
+                {
+                        """
+                func @"f" (%0 : java.type:"int")java.type:"void" -> {
+                      %4 : java.type:"int" = add %0 %0;
+                      return;
+                  };
+                """, 1
+                },
+                {
+                        """
+                func @"f" (%0 : java.type:"int")java.type:"void" -> {
+                      %3 : java.type:"java.lang.String" = java.switch.expression %0
+                          ()java.type:"boolean" -> {
+                              %4 : java.type:"boolean" = constant @true;
+                              yield %4;
+                          }
+                          ()java.type:"java.lang.String" -> {
+                              %5 : java.type:"java.lang.String" = constant @"x = ";
+                              %7 : java.type:"java.lang.String" = concat %5 %0;
+                              yield %7;
+                          };
+                      return;
+                  };
+                """, 1
+                },
+                {
+                        """
+                func @"f" (%0 : java.type:"int", %1 : java.type:"java.lang.String")java.type:"void" -> {
+                      %3 : java.type:"java.lang.String" = java.switch.expression %0
+                          ()java.type:"boolean" -> {
+                              %4 : java.type:"boolean" = constant @true;
+                              yield %4;
+                          }
+                          ()java.type:"java.lang.String" -> {
+                              %5 : java.type:"java.lang.String" = constant @"x = ";
+                              %7 : java.type:"java.lang.String" = concat %5 %1;
+                              yield %7;
+                          };
+                      return;
+                  };
+                """, 2
+                }
+        };
+    }
+
+    @ParameterizedTest
+    @MethodSource("numParamsCases")
+    void testNumAndOrderOfParams(String model, int expectedNumParams) {
+        CoreOp.FuncOp funcOp = (CoreOp.FuncOp) OpParser.fromText(JavaOp.JAVA_DIALECT_FACTORY, model).get(0);
+        CoreOp.FuncOp qm = Quoted.embedOp(funcOp.body().entryBlock().ops().getFirst());
+        Assertions.assertEquals(expectedNumParams, qm.parameters().size());
+
+        // test that qm parameters are the sequence set of op 's operands + captured values
+        CoreOp.QuotedOp qop = ((CoreOp.QuotedOp) qm.body().entryBlock().ops().get(qm.body().entryBlock().ops().size() - 2));
+        Op op = qop.quotedOp();
+        SequencedSet<Value> expectedParams = new LinkedHashSet<>();
+        expectedParams.addAll(op.operands());
+        expectedParams.addAll(op.capturedValues());
+        Assertions.assertEquals(expectedParams.stream().toList(), qm.parameters());
+
+        // test that validation in Quoted constructor are correct
+        SequencedMap<Value, Object> m = new LinkedHashMap<>();
+        for (Value p : expectedParams) {
+            m.put(p, new Object());
+        }
+        new Quoted<>(op, m);
+    }
+}

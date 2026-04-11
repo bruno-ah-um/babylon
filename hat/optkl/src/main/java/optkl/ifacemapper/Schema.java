@@ -29,22 +29,22 @@ import jdk.incubator.code.Op;
 import jdk.incubator.code.Reflect;
 import jdk.incubator.code.dialect.core.CoreOp;
 import jdk.incubator.code.dialect.java.JavaOp;
-import optkl.util.carriers.CommonCarrier;
+import optkl.IfaceValue;
 import optkl.ifacemapper.accessor.AccessorInfo;
 import optkl.ifacemapper.accessor.ValueType;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-public class Schema<T extends MappableIface> {
+public class Schema<T extends IfaceValue> {
     final public IfaceType rootIfaceType;
     public Class<T> iface;
 
@@ -69,37 +69,7 @@ public class Schema<T extends MappableIface> {
         this.rootIfaceType = rootIfaceType;
     }
 
-    public T allocate(CommonCarrier commonCarrier, int... boundLengths) {
-        BoundSchema<?> boundSchema = new BoundSchema<>(this, boundLengths);
-        T instance = (T) boundSchema.allocate(commonCarrier.lookup(), commonCarrier);
-        MemorySegment memorySegment = MappableIface.getMemorySegment(instance);
-        int[] count = new int[]{0};
-
-
-        boundSchema.boundArrayFields().forEach(boundArrayFieldLayout -> {
-            boundArrayFieldLayout.dimFields.forEach(dimLayout -> {
-                long dimOffset = dimLayout.offset();
-                int dim = boundLengths[count[0]++];
-                if (dimLayout.field instanceof FieldNode.ArrayLen arrayLen) {
-                    if (arrayLen.key.accessorType.equals(AccessorInfo.AccessorType.GETTER_AND_SETTER)) {
-                        throw new IllegalStateException("You have a bound array dim field " + dimLayout.field.name + " controlling size of " + boundArrayFieldLayout.field.name + "[] which has a setter ");
-                    }
-                    if (arrayLen.type == Long.TYPE) {
-                        memorySegment.set(ValueLayout.JAVA_LONG, dimOffset, dim);
-                    } else if (arrayLen.type == Integer.TYPE) {
-                        memorySegment.set(ValueLayout.JAVA_INT, dimOffset, dim);
-                    } else {
-                        throw new IllegalArgumentException("Unsupported array length type: " + arrayLen.type);
-                    }
-                }
-            });
-        });
-
-
-        return instance;
-    }
-
-    public static <T extends Buffer> Schema<T> of(Class<T> iface, Consumer<IfaceType> parentFieldConsumer) {
+    public static <T extends IfaceValue> Schema<T> of(Class<T> iface, Consumer<IfaceType> parentFieldConsumer) {
         var struct = new IfaceType.Struct(null, (Class<MappableIface>) (Object) iface); // why the need for this?
         parentFieldConsumer.accept(struct);
         return new Schema<>(iface, struct);
@@ -139,7 +109,7 @@ public class Schema<T extends MappableIface> {
 
         record Receiver(JavaOp.InvokeOp array, List<JavaOp.InvokeOp> args){
             public String arrayName() {
-                return array.invokeDescriptor().name();
+                return array.invokeReference().name();
             }
 
         }
@@ -190,7 +160,7 @@ public class Schema<T extends MappableIface> {
                         .filter(ce -> ce instanceof JavaOp.InvokeOp)
                         .map(ce -> (JavaOp.InvokeOp) ce)
                         .forEach(invokeOp -> {
-                            String name = invokeOp.invokeDescriptor().name();
+                            String name = invokeOp.invokeReference().name();
                             if (name.equals("schema")){
                                //System.out.println("This could get recursive very quickly");
                             }else if (name.equals("pad")) {
@@ -218,7 +188,7 @@ public class Schema<T extends MappableIface> {
                                     if (uses.iterator().next() instanceof Op.Result result) {// is might it a constant like we have only one, so probably a constant like length
                                         // we have a call which is possibly being passed to another method say we have width and we want to find invokeOp -> "array(width())"
                                         if (consumedInvoke(invokeOp, result) instanceof Receiver  receiver
-                                              && receiver.args.stream().map(i->i.invokeDescriptor().name()).filter(declared::contains).toList() instanceof List<String> containedConsumers
+                                              && receiver.args.stream().map(i->i.invokeReference().name()).filter(declared::contains).toList() instanceof List<String> containedConsumers
                                                && receiver.args.size() == containedConsumers.size()){
                                             // in our case we expect Reciever (array,[width, height])
                                             schemaBuilder.arrayLen(containedConsumers).array(receiver.arrayName());
@@ -288,9 +258,22 @@ public class Schema<T extends MappableIface> {
             }
         }
 
-        public void visitTypes(int depth, Consumer<IfaceType> ifaceTypeNodeConsumer) {
-            ifaceTypes.forEach(t -> t.visitTypes(depth + 1, ifaceTypeNodeConsumer));
+      //  public void visitTypes(int depth, Consumer<IfaceType> ifaceTypeNodeConsumer) {
+        //    ifaceTypes.forEach(t -> t.visitTypes(depth + 1, ifaceTypeNodeConsumer));
+          //  ifaceTypeNodeConsumer.accept(this);
+       // }
+        private void visitUniqueTypes(Set<Class<?>> classSet, int depth, Consumer<IfaceType> ifaceTypeNodeConsumer) {
+            ifaceTypes.forEach(t -> {
+                if (!classSet.contains(t.iface)) {
+                    classSet.add(t.iface);
+                    t.visitUniqueTypes(classSet,  depth + 1, ifaceTypeNodeConsumer);
+                }
+            });
             ifaceTypeNodeConsumer.accept(this);
+        }
+        public void visitUniqueTypes(Consumer<IfaceType> ifaceTypeNodeConsumer) {
+
+            visitUniqueTypes(new HashSet<>(),0,ifaceTypeNodeConsumer);
         }
 
 

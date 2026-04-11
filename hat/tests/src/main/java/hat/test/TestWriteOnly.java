@@ -28,9 +28,10 @@ import hat.Accelerator;
 import hat.ComputeContext;
 import hat.KernelContext;
 import hat.NDRange;
+import optkl.ifacemapper.BoundSchema;
 import optkl.ifacemapper.Buffer;
-import optkl.ifacemapper.MappableIface;
 import optkl.ifacemapper.MappableIface.RO;
+import optkl.ifacemapper.MappableIface.WO;
 import optkl.ifacemapper.Schema;
 import hat.test.annotation.HatTest;
 import hat.test.exceptions.HATAsserts;
@@ -51,7 +52,7 @@ public class TestWriteOnly {
         );
 
         static CellGrid create(Accelerator accelerator, int width, int height) {
-            return schema.allocate(accelerator, width, height);
+            return BoundSchema.of(accelerator ,schema, width, height).allocate();
         }
 
         default byte[][] arrayView() {
@@ -60,11 +61,11 @@ public class TestWriteOnly {
     }
 
     @Reflect
-    public static void life(@RO KernelContext kc, @RO CellGrid cellGrid, @MappableIface.WO CellGrid cellGridRes) {
+    public static void life(KernelContext kc, CellGrid cellGrid, CellGrid cellGridRes) {
     }
 
     @Reflect
-    static public void compute(final @RO ComputeContext cc, @RO CellGrid grid, @MappableIface.WO CellGrid gridRes) {
+    static public void compute(final @RO ComputeContext cc, @RO CellGrid grid, @WO CellGrid gridRes) {
         int range = grid.width() * grid.height();
         cc.dispatchKernel(NDRange.of1D(range), kc -> life(kc, grid, gridRes));
     }

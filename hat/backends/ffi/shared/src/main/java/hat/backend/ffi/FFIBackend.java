@@ -27,9 +27,6 @@ package hat.backend.ffi;
 
 import hat.ComputeContext;
 import hat.Config;
-import jdk.incubator.code.CodeTransformer;
-import jdk.incubator.code.bytecode.BytecodeGenerator;
-import jdk.incubator.code.interpreter.Interpreter;
 
 import java.lang.foreign.Arena;
 import java.lang.invoke.MethodHandles;
@@ -41,25 +38,13 @@ public abstract class FFIBackend extends FFIBackendDriver {
     }
 
     public void dispatchCompute(ComputeContext computeContext, Object... args) {
-        if (computeContext.computeEntrypoint().lowered == null) {
-            computeContext.computeEntrypoint().lowered =
-                    computeContext.computeEntrypoint().funcOp().transform(CodeTransformer.LOWERING_TRANSFORMER);
-        }
+
         backendBridge.computeStart();
-        if (config().interpret()) {
-            Interpreter.invoke(computeContext.lookup(), computeContext.computeEntrypoint().lowered, args);
-        } else {
-            try {
-                if (computeContext.computeEntrypoint().mh == null) {
-                    computeContext.computeEntrypoint().mh = BytecodeGenerator.generate(computeContext.lookup(), computeContext.computeEntrypoint().lowered);
-                }
-                computeContext.computeEntrypoint().mh.invokeWithArguments(args);
-            } catch (Throwable e) {
-                throw new RuntimeException(e);
-            }
-        }
+        // if (config().interpret()) {
+        //   computeContext.interpretWithArgs(args);
+        // } else {
+        computeContext.invokeWithArgs(args);
+        //}
         backendBridge.computeEnd();
     }
-
-
 }

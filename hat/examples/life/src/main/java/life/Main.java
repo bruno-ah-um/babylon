@@ -29,6 +29,7 @@ import hat.Accelerator.Compute;
 import hat.ComputeContext;
 import hat.NDRange;
 import hat.KernelContext;
+import optkl.ifacemapper.BoundSchema;
 import optkl.ifacemapper.Buffer;
 import optkl.ifacemapper.MappableIface;
 import optkl.ifacemapper.Schema;
@@ -71,7 +72,7 @@ public class Main {
         );
 
         static CellGrid create(Accelerator accelerator, int width, int height) {
-            return schema.allocate(accelerator, width, height);
+            return BoundSchema.of(accelerator ,schema, width, height).allocate();
         }
 
         ValueLayout valueLayout = JAVA_BYTE;
@@ -108,7 +109,7 @@ public class Main {
                         control.fields("from", "to"));//, "generation", "requiredFrameRate", "maxGenerations"));
 
         static Control create(Accelerator accelerator, CellGrid cellGrid) {
-            var instance = schema.allocate(accelerator);
+            var instance = BoundSchema.of(accelerator ,schema).allocate();
             instance.from(cellGrid.width() * cellGrid.height());
             instance.to(0);
             return instance;
@@ -143,7 +144,7 @@ public class Main {
 
 
         @Reflect
-        public static int val(@RO CellGrid grid, int from, int w, int x, int y) {
+        public static int val(CellGrid grid, int from, int w, int x, int y) {
             return grid.cell(((long) y * w) + x + from) & 1;
         }
 
@@ -174,7 +175,7 @@ public class Main {
                 """;
 
         @Reflect
-        public static void lifePerIdx(int idx, @RW Control control, @RW CellGrid cellGrid) {
+        public static void lifePerIdx(int idx, Control control, CellGrid cellGrid) {
             int w = cellGrid.width();
             int h = cellGrid.height();
             int from = control.from();
@@ -198,7 +199,7 @@ public class Main {
         }
 
         @Reflect
-        public static void life(@RO KernelContext kc, @RO Control control, @RW CellGrid cellGrid) {
+        public static void life(KernelContext kc, Control control, CellGrid cellGrid) {
             if (kc.gix < kc.gsx) {
                 ComputeLife.lifePerIdx(kc.gix, control, cellGrid);
             }

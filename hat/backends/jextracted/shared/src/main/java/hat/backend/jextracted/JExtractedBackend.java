@@ -28,38 +28,18 @@ package hat.backend.jextracted;
 import hat.ComputeContext;
 import hat.Config;
 import jdk.incubator.code.CodeTransformer;
-import hat.callgraph.CallGraph;
 import jdk.incubator.code.bytecode.BytecodeGenerator;
-import jdk.incubator.code.dialect.core.CoreOp;
-import jdk.incubator.code.interpreter.Interpreter;
 
 import java.lang.foreign.Arena;
 import java.lang.invoke.MethodHandles;
 
 public abstract class JExtractedBackend extends JExtractedBackendDriver {
 
-    public JExtractedBackend(Arena arena, MethodHandles.Lookup lookup,Config config, String libName) {
-        super(arena,lookup,config,libName);
+    public JExtractedBackend(Arena arena, MethodHandles.Lookup lookup, Config config, String libName) {
+        super(arena, lookup, config, libName);
     }
 
     public void dispatchCompute(ComputeContext computeContext, Object... args) {
-        if (computeContext.computeEntrypoint().lowered == null) {
-            computeContext.computeEntrypoint().lowered =
-                    computeContext.computeEntrypoint().funcOp().transform(CodeTransformer.LOWERING_TRANSFORMER);
-        }
-        boolean interpret = false;
-        if (interpret) {
-            Interpreter.invoke(computeContext.lookup(), computeContext.computeEntrypoint().lowered, args);
-        } else {
-            try {
-                if (computeContext.computeEntrypoint().mh == null) {
-                    computeContext.computeEntrypoint().mh = BytecodeGenerator.generate(computeContext.lookup(), computeContext.computeEntrypoint().lowered);
-                }
-                computeContext.computeEntrypoint().mh.invokeWithArguments(args);
-            } catch (Throwable e) {
-                System.out.println(computeContext.computeEntrypoint().lowered.toText());
-                throw new RuntimeException(e);
-            }
-        }
+        computeContext.invokeWithArgs(args);
     }
 }

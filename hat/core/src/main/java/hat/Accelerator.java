@@ -27,7 +27,7 @@ package hat;
 
 import hat.backend.Backend;
 
-import optkl.util.carriers.CommonCarrier;
+import optkl.util.carriers.ArenaAndLookupCarrier;
 import optkl.ifacemapper.BufferTracker;
 import optkl.ifacemapper.MappableIface;
 
@@ -48,7 +48,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 import static hat.backend.Backend.FIRST;
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.getTargetInvoke;
+import static optkl.OpHelper.Invoke.getTargetInvoke;
 import static optkl.OpHelper.Lambda.lambda;
 
 
@@ -76,7 +76,7 @@ import static optkl.OpHelper.Lambda.lambda;
  *
  * @author Gary Frost
  */
-public class Accelerator implements CommonCarrier,  BufferTracker {
+public class Accelerator implements ArenaAndLookupCarrier,  BufferTracker {
 
     private MethodHandles.Lookup lookup;
     @Override public MethodHandles.Lookup lookup(){return lookup;}

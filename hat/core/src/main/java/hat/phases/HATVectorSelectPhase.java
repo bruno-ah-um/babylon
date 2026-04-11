@@ -26,7 +26,8 @@ package hat.phases;
 
 import hat.callgraph.KernelCallGraph;
 import hat.dialect.HATVectorOp;
-import hat.types._V;
+import optkl.IfaceValue;
+import optkl.IfaceValue.Vector;
 import jdk.incubator.code.CodeContext;
 import jdk.incubator.code.CodeElement;
 import jdk.incubator.code.Op;
@@ -40,8 +41,8 @@ import optkl.Trxfmr;
 import java.util.HashMap;
 import java.util.Map;
 
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
+import static optkl.OpHelper.Invoke;
+import static optkl.OpHelper.Invoke.invoke;
 import static optkl.OpHelper.copyLocation;
 
 public record HATVectorSelectPhase(KernelCallGraph kernelCallGraph) implements HATPhase {
@@ -77,16 +78,15 @@ public record HATVectorSelectPhase(KernelCallGraph kernelCallGraph) implements H
                 return invokeOp.resultType();
             }
             int laneIdx() {
-                return "xyzw".indexOf(invokeOp.invokeDescriptor().name().charAt(0));
+                return "xyzw".indexOf(invokeOp.invokeReference().name().charAt(0));
             }
 
         }
 
         Map<CodeElement<?,?>, InvokeVar> ceToInvokeVar = new HashMap<>();
         Invoke.stream(lookup(),funcOp)
-                .filter(invoke ->
-                        invoke.named("x","y","z","w")
-                                && invoke.refIs(_V.class)
+                .filter(invoke -> invoke.nameMatchesRegex("[xyzw]")
+                                && invoke.refIs(Vector.class)
                                 && invoke.opFromFirstOperandOrThrow() instanceof CoreOp.VarAccessOp.VarLoadOp)
                 .map(invoke ->
                         new InvokeVar(invoke.op(),invoke.varLoadOpFromFirstOperandOrNull())
@@ -98,10 +98,8 @@ public record HATVectorSelectPhase(KernelCallGraph kernelCallGraph) implements H
 
         return Trxfmr.of(this,funcOp).transform(ceToInvokeVar::containsKey,(blockBuilder, op) -> {
             CodeContext context = blockBuilder.context();
-            if (invoke(lookup(),op) instanceof Invoke invoke
-                    && ceToInvokeVar.get(invoke.op()) instanceof InvokeVar invokeVar) {
-                Op newOp = invoke.returnsVoid()
-                        ?
+            if (invoke(lookup(),op) instanceof Invoke invoke && ceToInvokeVar.get(invoke.op()) instanceof InvokeVar invokeVar) {
+                Op newOp = invoke.returnsVoid() ?
                         // Code Model Pattern:
                         //  %16 : java.type:"hat.types.Float4" = var.load %15 @loc="63:28";
                         //  %17 : java.type:"float" = invoke %16 @loc="63:28" @java.ref:"hat.types.Float4::x():float";
@@ -109,7 +107,7 @@ public record HATVectorSelectPhase(KernelCallGraph kernelCallGraph) implements H
                         new HATVectorOp.HATVectorSelectStoreOp(
                                 invokeVar.name(),
                                 invokeVar.laneIdx(),
-                                invokeVar.varOpFromOperand(1),
+                                invokeVar.varOpFromOperand(1) instanceof CoreOp.VarOp varOp?varOp.varName():null,
                                 context.getValues(invokeVar.invokeOp.operands())
                         )
                         :

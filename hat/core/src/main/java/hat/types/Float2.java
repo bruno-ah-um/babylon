@@ -24,23 +24,16 @@
  */
 package hat.types;
 
-import jdk.incubator.code.Reflect;
 import jdk.incubator.code.dialect.java.JavaType;
-import jdk.incubator.code.dialect.java.PrimitiveType;
+import optkl.IfaceValue;
 
 import java.util.function.BiFunction;
 import java.util.stream.IntStream;
 
-public interface Float2 extends _V2 {
-
+public interface Float2 extends IfaceValue.Vector {
+    Shape shape = Shape.of(JavaType.FLOAT,2);
     float x();
     float y();
-
-    @Reflect
-    @Override
-    default PrimitiveType type() {
-        return JavaType.FLOAT;
-    }
 
     record MutableImpl(float x, float y) implements Float2 {
         public void x(float x) {}

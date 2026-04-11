@@ -53,6 +53,7 @@ import com.sun.tools.javac.comp.CodeReflectionTransformer;
 import com.sun.tools.javac.comp.TypeEnvs;
 import com.sun.tools.javac.jvm.ByteCodes;
 import com.sun.tools.javac.jvm.Gen;
+import com.sun.tools.javac.resources.CompilerProperties.*;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.tree.JCTree.JCAnnotation;
 import com.sun.tools.javac.tree.JCTree.JCArrayAccess;
@@ -100,6 +101,7 @@ import javax.tools.JavaFileObject;
 import java.lang.constant.ClassDesc;
 import java.util.*;
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -124,9 +126,6 @@ import java.lang.invoke.MethodHandles;
 import javax.tools.JavaFileManager;
 import javax.tools.StandardLocation;
 import jdk.incubator.code.bytecode.BytecodeGenerator;
-
-import static com.sun.tools.javac.resources.CompilerProperties.Notes.*;
-import static com.sun.tools.javac.resources.CompilerProperties.Warnings.*;
 
 /**
  * This a tree translator that adds the code model to all method declaration marked
@@ -203,7 +202,11 @@ public class ReflectMethods extends TreeTranslatorPrev {
         if (isReflectable) {
             if (currentClassSym.type.getEnclosingType().hasTag(CLASS) || currentClassSym.isDirectlyOrIndirectlyLocal()) {
                 // Reflectable methods in local classes are not supported
-                log.warning(tree, ReflectableMethodInnerClass(currentClassSym.enclClass()));
+                if (reflectAll) {
+                    log.warning(tree, Warnings.ReflectableMethodInnerClass(currentClassSym.enclClass()));
+                } else {
+                    log.error(tree, Errors.ReflectableMethodInnerClass(currentClassSym.enclClass()));
+                }
                 super.visitMethodDef(tree);
                 return;
             } else {
@@ -215,7 +218,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
                 } catch (Exception e) {
                     if (reflectAll) {
                         // log as warning for debugging purposses when reflectAll enabled
-                        log.warning(tree, ReflectableMethodUnsupported(currentClassSym.enclClass(), e.toString()));
+                        log.warning(tree, Warnings.ReflectableMethodUnsupported(currentClassSym.enclClass(), e.toString()));
                         super.visitMethodDef(tree);
                         return;
                     }
@@ -223,7 +226,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
                 }
                 if (dumpIR) {
                     // dump the method IR if requested
-                    log.note(ReflectableMethodIrDump(tree.sym.enclClass(), tree.sym, funcOp.toText()));
+                    log.note(Notes.ReflectableMethodIrDump(tree.sym.enclClass(), tree.sym, funcOp.toText()));
                 }
                 // create a static method that returns the op
                 Name methodName = methodName(symbolToMethodRef(tree.sym));
@@ -302,7 +305,11 @@ public class ReflectMethods extends TreeTranslatorPrev {
         if (isReflectable) {
             if (currentClassSym.type.getEnclosingType().hasTag(CLASS) || currentClassSym.isDirectlyOrIndirectlyLocal()) {
                 // Reflectable lambdas in local classes are not supported
-                log.warning(tree, ReflectableLambdaInnerClass(currentClassSym.enclClass()));
+                if (reflectAll) {
+                    log.warning(tree, Warnings.ReflectableLambdaInnerClass(currentClassSym.enclClass()));
+                } else {
+                    log.error(tree, Errors.ReflectableLambdaInnerClass(currentClassSym.enclClass()));
+                }
                 super.visitLambda(tree);
                 return;
             }
@@ -314,7 +321,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
                 funcOp = bodyScanner.scanLambda();
             } catch (Exception e) {
                 if (reflectAll) {
-                    log.warning(tree, ReflectableLambdaUnsupported(currentClassSym.enclClass(), e.toString()));
+                    log.warning(tree, Warnings.ReflectableLambdaUnsupported(currentClassSym.enclClass(), e.toString()));
                     super.visitLambda(tree);
                     return;
                 }
@@ -322,7 +329,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
             }
             if (dumpIR) {
                 // dump the method IR if requested
-                log.note(ReflectableLambdaIrDump(funcOp.toText()));
+                log.note(Notes.ReflectableLambdaIrDump(funcOp.toText()));
             }
             // create a static method that returns the FuncOp representing the lambda
             Name lambdaName = lambdaName();
@@ -350,7 +357,11 @@ public class ReflectMethods extends TreeTranslatorPrev {
         if (isReflectable(tree)) {
             if (currentClassSym.type.getEnclosingType().hasTag(CLASS)) {
                 // Reflectable method references in local classes are not supported
-                log.warning(tree, ReflectableMrefInnerClass(currentClassSym.enclClass()));
+                if (reflectAll) {
+                    log.warning(tree, Warnings.ReflectableMrefInnerClass(currentClassSym.enclClass()));
+                } else {
+                    log.error(tree, Errors.ReflectableMrefInnerClass(currentClassSym.enclClass()));
+                }
                 super.visitReference(tree);
                 return;
             }
@@ -360,7 +371,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
             CoreOp.FuncOp funcOp = bodyScanner.scanLambda();
             if (dumpIR) {
                 // dump the method IR if requested
-                log.note(ReflectableMrefIrDump(funcOp.toText()));
+                log.note(Notes.ReflectableMrefIrDump(funcOp.toText()));
             }
             // create a method that returns the FuncOp representing the lambda
             Name lambdaName = lambdaName();
@@ -584,9 +595,11 @@ public class ReflectMethods extends TreeTranslatorPrev {
                         !seenClasses.contains(tree.sym.owner)) {
                     // a reference to an enclosing field or method, we need to capture 'this'
                     capturesThis = true;
-                } else if (tree.sym.kind == VAR && ((VarSymbol)tree.sym).getConstValue() != null) {
+                } else if (tree.sym instanceof VarSymbol vsym &&
+                        vsym.getConstValue() != null &&
+                        !isVarSeen(vsym)) {
                     // record the constant value associated with this
-                    constantCaptures.put(tree.sym, ((VarSymbol)tree.sym).getConstValue());
+                    constantCaptures.put(tree.sym, vsym.getConstValue());
                 } else {
                     // might be a local capture
                     super.visitIdent(tree);
@@ -668,19 +681,19 @@ public class ReflectMethods extends TreeTranslatorPrev {
             return append(op, generateLocation(pos(), false), stack);
         }
 
-        private Op.Result append(Op op, Location l) {
+        private Op.Result append(Op op, Op.Location l) {
             return append(op, l, stack);
         }
 
-        private Op.Result append(Op op, Location l, BodyStack stack) {
+        private Op.Result append(Op op, Op.Location l, BodyStack stack) {
             lastOp = op;
             op.setLocation(l);
             return stack.block.op(op);
         }
 
-        Location generateLocation(DiagnosticPosition pos, boolean includeSourceReference) {
+        Op.Location generateLocation(DiagnosticPosition pos, boolean includeSourceReference) {
             if (!lineDebugInfo) {
-                return Location.NO_LOCATION;
+                return Op.Location.NO_LOCATION;
             }
 
             int startPos = pos.getStartPosition();
@@ -692,7 +705,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
             } else {
                 path = null;
             }
-            return new Location(path, line, col);
+            return new Op.Location(path, line, col);
         }
 
         private void appendReturnOrUnreachable(JCTree body) {
@@ -1633,7 +1646,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
             boolean hasDefaultCase = false;
 
             for (JCTree.JCCase c : cases) {
-                Body.Builder caseLabel = visitCaseLabel(tree, selector, target, c);
+                Body.Builder caseLabel = visitCaseLabel(tree, target, c);
                 Body.Builder caseBody = visitCaseBody(tree, c, caseBodyType, cases.getLast() == c);
                 bodies.add(caseLabel);
                 bodies.add(caseBody);
@@ -1659,7 +1672,27 @@ public class ReflectMethods extends TreeTranslatorPrev {
             return bodies;
         }
 
-        private Body.Builder visitCaseLabel(JCTree tree, JCExpression selector, Value target, JCTree.JCCase c) {
+        private Value processConstantLabel(Value target, JCTree.JCConstantCaseLabel label) {
+            if (target.type().equals(JavaType.J_L_STRING)) {
+                return append(JavaOp.invoke(
+                        MethodRef.method(Objects.class, "equals", boolean.class, Object.class, Object.class),
+                        target, toValue(label.expr)));
+            } else {
+                // target is primitive wrapper, primitive or enum
+                // if target of type Character, Byte, Short or Integer, unbox it
+                if (target.type().equals(JavaType.J_L_CHARACTER) || target.type().equals(JavaType.J_L_BYTE) ||
+                        target.type().equals(JavaType.J_L_SHORT) || target.type().equals(JavaType.J_L_INTEGER)) {
+                    PrimitiveType pt = ((ClassType) target.type()).unbox().get();
+                    target = convert(target, typeElementToType(pt));
+                }
+                Value expr = toValue(label.expr);
+                // conversion may be needed for primitive, e.g. label (byte) 1 and selector of type int
+                expr = convert(expr, typeElementToType(target.type()));
+                return append(JavaOp.eq(target, expr));
+            }
+        }
+
+        private Body.Builder visitCaseLabel(JCTree tree, Value target, JCTree.JCCase c) {
             Body.Builder body;
             FunctionType caseLabelType = CoreType.functionType(JavaType.BOOLEAN, target.type());
 
@@ -1677,6 +1710,8 @@ public class ReflectMethods extends TreeTranslatorPrev {
                     List<Body.Builder> clBodies = new ArrayList<>();
 
                     pushBody(pcl.pat, CoreType.functionType(JavaType.BOOLEAN));
+
+                    localTarget = boxIfNeeded(localTarget);
                     Value patVal = scanPattern(pcl.pat, localTarget);
                     append(CoreOp.core_yield(patVal));
                     clBodies.add(stack.body);
@@ -1689,6 +1724,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
 
                     localResult = append(JavaOp.conditionalAnd(clBodies));
                 } else {
+                    localTarget = boxIfNeeded(localTarget);
                     localResult = scanPattern(pcl.pat, localTarget);
                 }
                 // Yield the boolean result of the condition
@@ -1703,33 +1739,14 @@ public class ReflectMethods extends TreeTranslatorPrev {
                 Value localTarget = stack.block.parameters().get(0);
                 final Value localResult;
                 if (c.labels.size() == 1) {
-                    Value expr = toValue(ccl.expr);
-                    // per java spec, constant type is compatible with the type of the selector expression
-                    // so, we convert constant to the type of the selector expression
-                    expr = convert(expr, selector.type);
-                    if (selector.type.isPrimitive()) {
-                        localResult = append(JavaOp.eq(localTarget, expr));
-                    } else {
-                        localResult = append(JavaOp.invoke(
-                                MethodRef.method(Objects.class, "equals", boolean.class, Object.class, Object.class),
-                                localTarget, expr));
-                    }
+                    localResult = processConstantLabel(localTarget, ccl);
                 } else {
                     List<Body.Builder> clBodies = new ArrayList<>();
                     for (JCTree.JCCaseLabel cl : c.labels) {
                         ccl = (JCTree.JCConstantCaseLabel) cl;
                         pushBody(ccl, CoreType.functionType(JavaType.BOOLEAN));
 
-                        Value expr = toValue(ccl.expr);
-                        expr = convert(expr, selector.type);
-                        final Value labelResult;
-                        if (selector.type.isPrimitive()) {
-                            labelResult = append(JavaOp.eq(localTarget, expr));
-                        } else {
-                            labelResult = append(JavaOp.invoke(
-                                    MethodRef.method(Objects.class, "equals", boolean.class, Object.class, Object.class),
-                                    localTarget, expr));
-                        }
+                        final Value labelResult = processConstantLabel(localTarget, ccl);
 
                         append(CoreOp.core_yield(labelResult));
                         clBodies.add(stack.body);
@@ -1813,11 +1830,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
         @Override
         public void visitYield(JCTree.JCYield tree) {
             Value retVal = toValue(tree.value, bodyTarget);
-            if (retVal == null) {
-                result = append(JavaOp.java_yield());
-            } else {
-                result = append(JavaOp.java_yield(retVal));
-            }
+            result = append(JavaOp.java_yield(retVal));
         }
 
         @Override
@@ -2805,9 +2818,9 @@ public class ReflectMethods extends TreeTranslatorPrev {
                     ub = types.erasure(ub);
                 }
                 yield t.tsym.owner.kind == Kind.MTH ?
-                    JavaType.typeVarRef(t.tsym.name.toString(), symbolToMethodRef(t.tsym.owner),
+                    JavaType.typeVar(t.tsym.name.toString(), symbolToMethodRef(t.tsym.owner),
                             typeToTypeElement(ub)) :
-                    JavaType.typeVarRef(t.tsym.name.toString(),
+                    JavaType.typeVar(t.tsym.name.toString(),
                             (jdk.incubator.code.dialect.java.ClassType)symbolToErasedDesc(t.tsym.owner),
                             typeToTypeElement(ub));
             }

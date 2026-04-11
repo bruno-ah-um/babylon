@@ -52,7 +52,7 @@ public interface BabylonOpDispatcher<T extends JavaOrC99StyleCodeBuilder<T,SCBC>
 
     T conditionalOp( JavaOp.JavaConditionalOp conditionalOp);
 
-    T binaryTestOp( JavaOp.BinaryTestOp binaryTestOp);
+    T compareOp(JavaOp.CompareOp compareOp);
 
     T convOp( JavaOp.ConvOp convOp);
 
@@ -115,7 +115,7 @@ public interface BabylonOpDispatcher<T extends JavaOrC99StyleCodeBuilder<T,SCBC>
             case JavaOp.LabeledOp $ -> labeledOp( $);
             case JavaOp.BreakOp $ -> breakOp( $);
             case JavaOp.ContinueOp $ -> continueOp( $);
-            case JavaOp.BinaryTestOp $ -> binaryTestOp( $);
+            case JavaOp.CompareOp $ -> compareOp( $);
             case JavaOp.BinaryOp $ -> binaryOp( $);
             case JavaOp.JavaConditionalOp $ -> conditionalOp( $);
             case JavaOp.UnaryOp $ -> unaryOp( $);
@@ -125,6 +125,9 @@ public interface BabylonOpDispatcher<T extends JavaOrC99StyleCodeBuilder<T,SCBC>
             case JavaOp.EnhancedForOp $ -> enhancedForOp($);
             case JavaOp.BlockOp   $ -> blockOp($);
             case JavaOp.ConcatOp $ -> concatOp($);
+            case CoreOp.UnreachableOp $ -> {;}
+                //throw new IllegalStateException("Found CoreOp.Unreachable"+op);
+           // }
             default -> throw new IllegalStateException("handle nesting of op " + op);
         }
         return (T) this;

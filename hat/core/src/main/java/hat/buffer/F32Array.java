@@ -25,7 +25,8 @@
 package hat.buffer;
 
 import jdk.incubator.code.Reflect;
-import optkl.util.carriers.CommonCarrier;
+import optkl.ifacemapper.BoundSchema;
+import optkl.util.carriers.ArenaAndLookupCarrier;
 import optkl.ifacemapper.Buffer;
 import optkl.ifacemapper.MappableIface;
 import optkl.ifacemapper.Schema;
@@ -36,17 +37,23 @@ import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 public interface F32Array extends Buffer {
-    @Reflect default void  schema(){array(length());}
+    @Reflect
+    default void schema() {
+        array(length());
+    }
+
     int length();
+
     float array(long idx);
+
     void array(long idx, float f);
 
     long ARRAY_OFFSET = JAVA_INT.byteSize();
 
     Schema<F32Array> schema = Schema.of(F32Array.class);
 
-    static F32Array create(CommonCarrier cc, int length){
-        return schema.allocate(cc, length);
+    static F32Array create(ArenaAndLookupCarrier cc, int length) {
+        return BoundSchema.of(cc ,schema, length).allocate();
     }
 
     default F32Array copyFrom(float[] floats) {
@@ -54,8 +61,8 @@ public interface F32Array extends Buffer {
         return this;
     }
 
-    static F32Array createFrom(CommonCarrier cc, float[] arr){
-        return create( cc, arr.length).copyFrom(arr);
+    static F32Array createFrom(ArenaAndLookupCarrier cc, float[] arr) {
+        return create(cc, arr.length).copyFrom(arr);
     }
 
     default F32Array copyTo(float[] floats) {

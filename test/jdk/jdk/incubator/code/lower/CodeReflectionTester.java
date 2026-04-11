@@ -1,0 +1,105 @@
+/*
+ * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+
+import java.io.StringWriter;
+import java.lang.reflect.Member;
+import java.lang.reflect.Method;
+
+import jdk.incubator.code.CodeTransformer;
+import jdk.incubator.code.Op;
+import jdk.incubator.code.dialect.core.SSA;
+import jdk.incubator.code.dialect.core.CoreOp;
+import jdk.incubator.code.dialect.java.JavaOp;
+import jdk.incubator.code.extern.OpParser;
+import jdk.incubator.code.extern.OpWriter;
+import jdk.incubator.code.Reflect;
+
+public class CodeReflectionTester {
+
+    public static void main(String[] args) throws ReflectiveOperationException {
+        if (args.length != 1) {
+            System.err.println("Usage: ReflectTester <classname>");
+            System.exit(1);
+        }
+        Class<?> clazz = Class.forName(args[0]);
+        for (Method m : clazz.getDeclaredMethods()) {
+            check(m);
+        }
+    }
+
+    static void check(Method method) throws ReflectiveOperationException {
+        if (!method.isAnnotationPresent(Reflect.class)) {
+            return;
+        }
+
+        LoweredModel lma = method.getAnnotation(LoweredModel.class);
+        if (lma == null) {
+            throw new AssertionError("No @IR annotation found on reflective method");
+        }
+
+        CoreOp.FuncOp f = Op.ofMethod(method).orElseThrow(() ->
+                new AssertionError("No code model for reflective method"));
+        f = lower(f, lma.ssa());
+
+        String actual = canonicalizeModel(method, f);
+        String expected = canonicalizeModel(method, lma.value());
+        if (!actual.equals(expected)) {
+            throw new AssertionError(String.format("Bad code model\nFound:\n%s\n\nExpected:\n%s", actual, expected));
+        }
+    }
+
+    static CoreOp.FuncOp lower(CoreOp.FuncOp f, boolean ssa) {
+        f = f.transform(CodeTransformer.LOWERING_TRANSFORMER);
+        System.out.println(f.toText());
+
+        if (ssa) {
+            f = SSA.transform(f);
+            System.out.println(f.toText());
+        }
+
+        return f;
+    }
+
+    // serializes dropping location information, parses, and then serializes, dropping location information
+    static String canonicalizeModel(Member m, Op o) {
+        return canonicalizeModel(m, serialize(o));
+    }
+
+    // parses, and then serializes, dropping location information
+    static String canonicalizeModel(Member m, String d) {
+        Op o;
+        try {
+            o = OpParser.fromText(JavaOp.JAVA_DIALECT_FACTORY, d).get(0);
+        } catch (Exception e) {
+            throw new IllegalStateException(m.toString(), e);
+        }
+        return serialize(o);
+    }
+
+    // serializes, dropping location information
+    static String serialize(Op o) {
+        StringWriter w = new StringWriter();
+        OpWriter.writeTo(w, o, OpWriter.LocationOption.DROP_LOCATION);
+        return w.toString();
+    }
+}

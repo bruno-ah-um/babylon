@@ -28,16 +28,14 @@ import jdk.incubator.code.Reflect;
 
 import hat.types.F16;
 import hat.device.DeviceSchema;
-import hat.device.DeviceType;
+import hat.device.NonMappableIface;
 import hat.test.annotation.HatTest;
 import hat.test.exceptions.HATAsserts;
 
-import java.lang.invoke.MethodHandles;
-
 /**
- * Test to check the Intermediate Representation (IR) of {@link DeviceType} interfaces
+ * Test to check the Intermediate Representation (IR) of {@link NonMappableIface} interfaces
  * in HAT.
- * <p>A {@link DeviceType} interface is a special type in HAT that enables developers
+ * <p>A {@link NonMappableIface} interface is a special type in HAT that enables developers
  * to define custom data structures in Java and allocate them in private and/or
  * local memory of the target accelerator (e.g., local memory on GPUs in OpenCL,
  * or shared memory in CUDA).</p>
@@ -50,14 +48,14 @@ import java.lang.invoke.MethodHandles;
  */
 public class TestDeviceType {
 
-    public interface MyDeviceArray extends DeviceType {
+    public interface MyDeviceArray extends NonMappableIface {
         F16 array(int index);
         void array(int index, F16 value);
 
         void x(float x);
         float x();
 
-        DeviceSchema<MyDeviceArray> schema = DeviceSchema.of(MethodHandles.lookup(),null,MyDeviceArray.class, builder ->
+        DeviceSchema<MyDeviceArray> schema = DeviceSchema.of(MyDeviceArray.class, builder ->
                 builder.withArray("array", 2048)
                         .withDeps(F16.class, half -> half.withField("value"))
                         .withField("x"));
@@ -70,7 +68,7 @@ public class TestDeviceType {
     /**
      * The following test checks the IR of the {@link MyDeviceArray} data structure.
      * This data structure is meant to be used as an array that contains {@link F16} values.
-     * Note that {@link F16} type is provided by hat, and it can be used within {@link DeviceType}.
+     * Note that {@link F16} type is provided by hat, and it can be used within {@link NonMappableIface}.
      */
     @HatTest
     @Reflect
@@ -83,11 +81,11 @@ public class TestDeviceType {
 
     /**
      * The following device type represents a 2D structure demonstrating nested
-     * interfaces. The main interface inherits from {@link DeviceType} and it
+     * interfaces. The main interface inherits from {@link NonMappableIface} and it
      * represents an array of {@link SubRange} objects, where each sub-range
      * also contains an array of integers.
      */
-    public interface MyNDRAnge extends DeviceType {
+    public interface MyNDRAnge extends NonMappableIface {
         SubRange array(int index);
         void array(int index, SubRange value);
 
@@ -99,7 +97,7 @@ public class TestDeviceType {
         /**
          * This structure creates an 2D matrix of 2048 x 64 elements.
          */
-        DeviceSchema<MyNDRAnge> schema = DeviceSchema.of(MethodHandles.lookup(),null,MyNDRAnge.class, builder ->
+        DeviceSchema<MyNDRAnge> schema = DeviceSchema.of(MyNDRAnge.class, builder ->
                 builder.withArray("array", 2048)
                         .withDeps(SubRange.class, subrange -> subrange.withArray("range", 64)));
 
@@ -118,7 +116,7 @@ public class TestDeviceType {
     }
 
     /**
-     * A multidimensional array structure demonstrating nested {@link DeviceType} interfaces.
+     * A multidimensional array structure demonstrating nested {@link NonMappableIface} interfaces.
      * The dimensions are 2048 × 64 × 32 with the following hierarchy:
      * <p>
      * <ul>
@@ -128,7 +126,7 @@ public class TestDeviceType {
      * </ul>
      * </p>
      */
-    public interface MultiDim extends DeviceType {
+    public interface MultiDim extends NonMappableIface {
         _2D array(int index);
         void array(int index, _2D value);
 
@@ -142,7 +140,7 @@ public class TestDeviceType {
             }
         }
 
-        DeviceSchema<MultiDim> schema = DeviceSchema.of(MethodHandles.lookup(),null,MultiDim.class, builder ->
+        DeviceSchema<MultiDim> schema = DeviceSchema.of(MultiDim.class, builder ->
                 builder.withArray("array", 2048)
                         .withDeps(_2D.class,subrange -> subrange.withArray("range2", 64)
                                                                                        .withDeps(_2D._3D.class, f -> f.withArray("value", 32))));
@@ -168,7 +166,7 @@ public class TestDeviceType {
         }
     }
 
-    public interface MultiDimFix extends DeviceType {
+    public interface MultiDimFix extends NonMappableIface {
         _2D array(int index);
         void array(int index, _2D value);
 
@@ -182,7 +180,7 @@ public class TestDeviceType {
             }
         }
 
-        DeviceSchema<MultiDimFix> schema = DeviceSchema.of(MethodHandles.lookup(),null,MultiDimFix.class, builder ->
+        DeviceSchema<MultiDimFix> schema = DeviceSchema.of(MultiDimFix.class, builder ->
                 builder.withArray("array", 2048)
                         .withDeps(_2D.class,subrange -> subrange.withArray("_range2", 64)
                                 .withDeps(_2D._3D.class, f -> f.withArray("value", 32))));

@@ -59,6 +59,9 @@ public class HATTier implements  LookupCarrier {
         // ID's /thread access
         hatPhases.add(new HATThreadsPhase(kernelCallGraph));
 
+        // MathLib phase
+        hatPhases.add(new HATMathLibPhase(kernelCallGraph));
+
         // views for vector types
         hatPhases.add(new HATVectorPhase.Float4LoadPhase(kernelCallGraph));
         hatPhases.add(new HATVectorPhase.Float2LoadPhase(kernelCallGraph));
@@ -89,7 +92,13 @@ public class HATTier implements  LookupCarrier {
             try {
                 // TODO Did we just trash side tables ?
                 Function<CoreOp.FuncOp,CoreOp.FuncOp> phase = queue.take();
+                if (kernelCallGraph.config().showCompilationPhases()){
+                    System.out.println("Before PHASE" +phase.getClass().getSimpleName()+"\n"+f.toText());
+                }
                 f = phase.apply(f);
+                if (kernelCallGraph.config().showCompilationPhases()){
+                    System.out.println("After PHASE" +phase.getClass().getSimpleName()+"\n"+f.toText());
+                }
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }

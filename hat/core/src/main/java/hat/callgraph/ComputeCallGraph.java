@@ -42,14 +42,9 @@ import jdk.incubator.code.dialect.java.MethodRef;
 
 import java.util.*;
 
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
+import static optkl.OpHelper.Invoke.invoke;
 
 public class ComputeCallGraph extends CallGraph<ComputeEntrypoint> {
-
-    public final Map<MethodRef, MethodCall> bufferAccessToMethodCallMap = new LinkedHashMap<>();
-
-    ComputeContextMethodCall computeContextMethodCall;
-
     public Config config() {
         return computeContext.config();
     }
@@ -58,38 +53,8 @@ public class ComputeCallGraph extends CallGraph<ComputeEntrypoint> {
     }
 
     public abstract static class ComputeReachableResolvedMethodCall extends ResolvedMethodCall implements ComputeReachable {
-        public ComputeReachableResolvedMethodCall(CallGraph<ComputeEntrypoint> callGraph, MethodRef targetMethodRef, Method method, CoreOp.FuncOp funcOp) {
-            super(callGraph, targetMethodRef, method, funcOp);
-        }
-    }
-
-    public static class ComputeReachableUnresolvedMethodCall extends UnresolvedMethodCall implements ComputeReachable {
-        ComputeReachableUnresolvedMethodCall(CallGraph<ComputeEntrypoint> callGraph, MethodRef targetMethodRef, Method method) {
-            super(callGraph, targetMethodRef, method);
-        }
-    }
-
-    public static class ComputeReachableIfaceMappedMethodCall extends ComputeReachableUnresolvedMethodCall {
-        ComputeReachableIfaceMappedMethodCall(CallGraph<ComputeEntrypoint> callGraph, MethodRef targetMethodRef, Method method) {
-            super(callGraph, targetMethodRef, method);
-        }
-    }
-
-    public static class ComputeReachableAcceleratorMethodCall extends ComputeReachableUnresolvedMethodCall {
-        ComputeReachableAcceleratorMethodCall(CallGraph<ComputeEntrypoint> callGraph, MethodRef targetMethodRef, Method method) {
-            super(callGraph, targetMethodRef, method);
-        }
-    }
-
-    public static class ComputeContextMethodCall extends ComputeReachableUnresolvedMethodCall {
-        ComputeContextMethodCall(CallGraph<ComputeEntrypoint> callGraph, MethodRef targetMethodRef, Method method) {
-            super(callGraph, targetMethodRef, method);
-        }
-    }
-
-    public static class OtherComputeReachableResolvedMethodCall extends ComputeReachableResolvedMethodCall {
-        OtherComputeReachableResolvedMethodCall(CallGraph<ComputeEntrypoint> callGraph, MethodRef targetMethodRef, Method method, CoreOp.FuncOp funcOp) {
-            super(callGraph, targetMethodRef, method, funcOp);
+        public ComputeReachableResolvedMethodCall(CallGraph<ComputeEntrypoint> callGraph,  Method method, CoreOp.FuncOp funcOp) {
+            super(callGraph,  method, funcOp);
         }
     }
 
@@ -130,31 +95,25 @@ public class ComputeCallGraph extends CallGraph<ComputeEntrypoint> {
 
 
     public ComputeCallGraph(ComputeContext computeContext, Method method, CoreOp.FuncOp funcOp) {
-        super(computeContext, new ComputeEntrypoint(null, method, funcOp));
-        entrypoint.callGraph = this;
+        super(computeContext, new ComputeEntrypoint(computeContext.lookup(),null, method, funcOp));
+        entrypoint.callGraph = this; // This is bad we should be able to do better
         setModuleOp(createTransitiveInvokeModule(computeContext.lookup(), entrypoint.funcOp()));
     }
 
 
     @Override
-    public boolean filterCalls(CoreOp.FuncOp funcOp, JavaOp.InvokeOp invokeOp, Method method, MethodRef methodRef, Class<?> javaRefTypeClass) {
-        var invoke = invoke(computeContext.lookup(),invokeOp);
-        if (entrypoint.method.getDeclaringClass().equals(invoke.classOrThrow())
+    public boolean filterCalls(CoreOp.FuncOp funcOp, OpHelper.Invoke invoke) {
+        Method method = invoke.resolveMethodOrThrow();
+        if (entrypoint.method().getDeclaringClass().equals(invoke.classOrThrow())
                 && isValidKernelDispatch(computeContext.lookup(),method, funcOp)) {
             // TODO this side effect is not good.  we should do this when we construct !
-            kernelCallGraphMap.computeIfAbsent(methodRef, _ ->
-                    new KernelCallGraph(this, methodRef, method, funcOp)
+            kernelCallGraphMap.computeIfAbsent( invoke.op().invokeReference(), _ ->
+                    new KernelCallGraph(this, method, funcOp)
             );
-        } else if (ComputeContext.class.isAssignableFrom(javaRefTypeClass)) {
-            computeContextMethodCall = new ComputeContextMethodCall(this, methodRef, method);
-        } else if (Buffer.class.isAssignableFrom(javaRefTypeClass)) {
-            bufferAccessToMethodCallMap.computeIfAbsent(methodRef, _ ->
-                    new ComputeReachableIfaceMappedMethodCall(this, methodRef, method)
-            );
+            return true;
         } else {
             return false;
         }
-        return true;
     }
 
 }

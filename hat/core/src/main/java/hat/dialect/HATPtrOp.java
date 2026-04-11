@@ -35,11 +35,29 @@ import java.util.Map;
 public abstract sealed class HATPtrOp extends HATOp
         permits HATPtrOp.HATPtrLengthOp, HATPtrOp.HATPtrLoadOp, HATPtrOp.HATPtrStoreOp {
 
-    private final TypeElement resultType;
-    private final Class<?> bufferClass;
-    private final List<String> strides;
+    private TypeElement resultType;
+    private List<String> strides;
+    private String name;
 
     private static final String NAME = "HATPtrOp";
+
+    public HATPtrOp(String name, TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
+        this(operands);
+        this.resultType = resultType;
+        this.strides = getFieldsOfBuffer(bufferClass);
+        this.name = name;
+    }
+
+    public HATPtrOp(List<Value> operands) {
+        super(operands);
+    }
+
+    public HATPtrOp(HATPtrOp op, CodeContext copyContext) {
+        super(op, copyContext);
+        this.resultType = op.resultType;
+        this.strides = op.strides;
+        this.name = op.name;
+    }
 
     public static List<String> getFieldsOfBuffer(Class<?> clazz) {
         List<String> retValue = List.of();
@@ -50,28 +68,14 @@ public abstract sealed class HATPtrOp extends HATOp
                             .stream()
                             .map(fieldNode -> fieldNode.name)
                             .toList();
-                    retValue = retValue.isEmpty()
-                            ?retValue
-                            :retValue.subList(0, retValue.size() - 1); // is this intended to drop the last one?
+                    // remove the "array" field from the fields
+                    if (!retValue.isEmpty()) retValue = retValue.subList(0, retValue.size() - 1);
                 }
             } catch (IllegalAccessException | NoSuchFieldException e) {
                 throw new RuntimeException("No schema field ",e);
             }
         }
         return retValue;
-    }
-    public HATPtrOp(TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
-        super(operands);
-        this.resultType = resultType;
-        this.bufferClass = bufferClass;
-        this.strides = getFieldsOfBuffer(bufferClass);
-    }
-
-    public HATPtrOp(HATPtrOp op, CodeContext copyContext) {
-        super(op, copyContext);
-        this.resultType = op.resultType;
-        this.bufferClass = op.bufferClass;
-        this.strides = op.strides;
     }
 
     @Override
@@ -83,6 +87,10 @@ public abstract sealed class HATPtrOp extends HATOp
         return strides;
     }
 
+    public String name() {
+        return name;
+    }
+
     @Override
     public Map<String, Object> externalize() {
         return Map.of("hat.dialect." + NAME, this.resultType());
@@ -92,8 +100,12 @@ public abstract sealed class HATPtrOp extends HATOp
 
         private static final String NAME = "HATPtrStoreOp";
 
-        public HATPtrStoreOp(TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
-            super(resultType, bufferClass, operands);
+        public HATPtrStoreOp(String name, TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
+            super(name, resultType, bufferClass, operands);
+        }
+
+        public HATPtrStoreOp(List<Value> operands) {
+            super(operands);
         }
 
         public HATPtrStoreOp(HATPtrStoreOp op, CodeContext copyContext) {
@@ -116,8 +128,12 @@ public abstract sealed class HATPtrOp extends HATOp
 
         private static final String NAME = "HATPtrLoadOp";
 
-        public HATPtrLoadOp(TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
-            super(resultType, bufferClass, operands);
+        public HATPtrLoadOp(String name, TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
+            super(name, resultType, bufferClass, operands);
+        }
+
+        public HATPtrLoadOp(List<Value> operands) {
+            super(operands);
         }
 
         public HATPtrLoadOp(HATPtrLoadOp op, CodeContext copyContext) {
@@ -139,8 +155,12 @@ public abstract sealed class HATPtrOp extends HATOp
 
         private static final String NAME = "HATPtrLengthOp";
 
-        public HATPtrLengthOp(TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
-            super(resultType, bufferClass, operands);
+        public HATPtrLengthOp(String name, TypeElement resultType, Class<?> bufferClass, List<Value> operands) {
+            super(name, resultType, bufferClass, operands);
+        }
+
+        public HATPtrLengthOp(List<Value> operands) {
+            super(operands);
         }
 
         public HATPtrLengthOp(HATPtrLengthOp op, CodeContext copyContext) {

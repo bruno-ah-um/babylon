@@ -30,7 +30,6 @@ import hat.Config;
 import hat.KernelContext;
 import hat.callgraph.KernelCallGraph;
 import jdk.incubator.code.CodeTransformer;
-import jdk.incubator.code.analysis.SSA;
 import optkl.Trxfmr;
 import optkl.codebuilders.ScopedCodeBuilderContext;
 import optkl.util.CallSite;
@@ -44,6 +43,7 @@ import jdk.incubator.code.CodeContext;
 import jdk.incubator.code.Op;
 import jdk.incubator.code.Value;
 import jdk.incubator.code.dialect.core.CoreOp;
+import jdk.incubator.code.dialect.core.SSA;
 
 import java.lang.foreign.Arena;
 import java.lang.invoke.MethodHandles;
@@ -51,8 +51,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke;
-import static optkl.OpHelper.Named.NamedStaticOrInstance.Invoke.invoke;
+import static optkl.OpHelper.Invoke;
+import static optkl.OpHelper.Invoke.invoke;
 
 public class CudaBackend extends C99FFIBackend {
     final int major = 7;
@@ -384,7 +384,7 @@ public class CudaBackend extends C99FFIBackend {
             }
             var compilationUnit = backendBridge.compile(code);
             if (compilationUnit.ok()) {
-                var kernel = compilationUnit.getKernel(kernelCallGraph.entrypoint.method.getName());
+                var kernel = compilationUnit.getKernel(kernelCallGraph.entrypoint.name());
                 return new CompiledKernel(this, kernelCallGraph,  kernel, args);
             } else {
                 throw new IllegalStateException("cuda failed to compile ");
@@ -393,7 +393,7 @@ public class CudaBackend extends C99FFIBackend {
         compiledKernel.dispatch(kernelContext, args);
     }
     String createC99(KernelCallGraph kernelCallGraph, Object... args){
-        return createCode(kernelCallGraph, new CudaHATKernelBuilder(new ScopedCodeBuilderContext(kernelCallGraph.lookup(),kernelCallGraph.entrypoint.funcOp())), args);
+        return createCode(kernelCallGraph, new CudaHATKernelBuilder(kernelCallGraph.state,new ScopedCodeBuilderContext(kernelCallGraph.lookup(),kernelCallGraph.entrypoint.funcOp())), args);
     }
 
     ///   Same as OpenCL backend until here
