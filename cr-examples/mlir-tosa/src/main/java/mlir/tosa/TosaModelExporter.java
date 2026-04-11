@@ -148,6 +148,52 @@ public final class TosaModelExporter {
     }
 
     /**
+     * Transpose convolution weights from OIHW (ONNX) layout to OHWI (TOSA) layout.
+     *
+     * <p>ONNX stores conv weights as {@code [OC, IC, KH, KW]}.
+     * TOSA's {@code tosa.conv2d} expects {@code [OC, KH, KW, IC]}.
+     * Call this once when loading weights before passing the model to
+     * {@link #export} or {@link #extractWeights}.
+     *
+     * @param weights Source tensor in OIHW layout {@code [OC, IC, KH, KW]}
+     * @return New tensor in OHWI layout {@code [OC, KH, KW, IC]}
+     * @throws IllegalArgumentException if {@code weights} is not rank-4
+     */
+    public static Tensor<Float> transposeOIHWtoOHWI(Tensor<Float> weights) {
+        long[] shape = weights.shape();
+        if (shape.length != 4) {
+            throw new IllegalArgumentException(
+                "Conv weight must be rank 4 [OC, IC, KH, KW], got rank " + shape.length);
+        }
+        long oc = shape[0];
+        long ic = shape[1];
+        long kh = shape[2];
+        long kw = shape[3];
+
+        float[] src = new float[(int) (oc * ic * kh * kw)];
+        float[] dst = new float[src.length];
+
+        for (int i = 0; i < src.length; i++) {
+            src[i] = weights.data().getAtIndex(java.lang.foreign.ValueLayout.JAVA_FLOAT, i);
+        }
+
+        // [OC, IC, KH, KW] → [OC, KH, KW, IC]
+        for (int o = 0; o < oc; o++) {
+            for (int c = 0; c < ic; c++) {
+                for (int h = 0; h < kh; h++) {
+                    for (int w = 0; w < kw; w++) {
+                        int srcIdx = (int) (o * ic * kh * kw + c * kh * kw + h * kw + w);
+                        int dstIdx = (int) (o * kh * kw * ic + h * kw * ic + w * ic + c);
+                        dst[dstIdx] = src[srcIdx];
+                    }
+                }
+            }
+        }
+
+        return Tensor.ofFloats(new long[]{oc, kh, kw, ic}, dst);
+    }
+
+    /**
      * Find a @Reflect annotated method by name.
      *
      * @param clazz The class to search in

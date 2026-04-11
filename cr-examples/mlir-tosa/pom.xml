@@ -16,6 +16,12 @@
         <junit.version>5.10.0</junit.version>
         <!-- Set to false to enable jextract if installed -->
         <skip.jextract>false</skip.jextract>
+        <!--
+          Set to true to skip native (CMake/LLVM) compilation.
+          Use the 'no-native' profile for a full no-LLVM build:
+            mvn package -Pno-native
+        -->
+        <skip.cmake>false</skip.cmake>
     </properties>
 
     <dependencies>
@@ -136,7 +142,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.1</version>
                 <executions>
-                    <!-- Run configure.sh script -->
+                    <!-- Run configure.sh script (skipped when skip.cmake=true) -->
                     <execution>
                         <id>cmake-configure</id>
                         <phase>generate-sources</phase>
@@ -144,6 +150,7 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
+                            <skip>${skip.cmake}</skip>
                             <executable>bash</executable>
                             <workingDirectory>${project.basedir}/lib</workingDirectory>
                             <arguments>
@@ -151,7 +158,7 @@
                             </arguments>
                         </configuration>
                     </execution>
-                    <!-- CMake build step -->
+                    <!-- CMake build step (skipped when skip.cmake=true) -->
                     <execution>
                         <id>cmake-build</id>
                         <phase>compile</phase>
@@ -159,6 +166,7 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
+                            <skip>${skip.cmake}</skip>
                             <executable>cmake</executable>
                             <workingDirectory>${project.basedir}/lib</workingDirectory>
                             <arguments>
@@ -234,5 +242,44 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+      Use -Pno-native to build and test without an LLVM/MLIR installation.
+      This skips CMake compilation and excludes tests that require the
+      native libmlir_tosa_c library at runtime.
+
+        mvn package -Pno-native
+
+      The pre-generated JExtract bindings in src/main/java/mlir/tosa/bindings/
+      must still be present (do not run 'mvn clean' without LLVM available).
+    -->
+    <profiles>
+        <profile>
+            <id>no-native</id>
+            <properties>
+                <skip.cmake>true</skip.cmake>
+                <skip.jextract>true</skip.jextract>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.1.2</version>
+                        <configuration>
+                            <!-- No native library path needed -->
+                            <argLine>--enable-preview --add-modules=jdk.incubator.code --enable-native-access=ALL-UNNAMED</argLine>
+                            <!-- Exclude tests that load the native MLIR library at runtime -->
+                            <excludes>
+                                <exclude>**/TosaCompilerTest.java</exclude>
+                                <exclude>**/NativeMNISTTest.java</exclude>
+                                <exclude>**/TosaModelExporterTest.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

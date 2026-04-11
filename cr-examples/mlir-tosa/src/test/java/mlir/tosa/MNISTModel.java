@@ -52,45 +52,14 @@ public class MNISTModel {
     }
 
     /**
-     * Transpose conv weights from OIHW (ONNX) to OHWI (TOSA).
-     * ONNX: [OC, IC, KH, KW] -> TOSA: [OC, KH, KW, IC]
-     */
-    private static Tensor<Float> transposeConvWeights(Tensor<Float> weights, long oc, long ic, long kh, long kw) {
-        float[] srcData = new float[(int)(oc * ic * kh * kw)];
-        float[] dstData = new float[(int)(oc * ic * kh * kw)];
-
-        // Read source data
-        for (int i = 0; i < srcData.length; i++) {
-            srcData[i] = weights.data().getAtIndex(java.lang.foreign.ValueLayout.JAVA_FLOAT, i);
-        }
-
-        // Transpose from [OC, IC, KH, KW] to [OC, KH, KW, IC]
-        for (int o = 0; o < oc; o++) {
-            for (int i = 0; i < ic; i++) {
-                for (int h = 0; h < kh; h++) {
-                    for (int w = 0; w < kw; w++) {
-                        int srcIdx = (int)(o * ic * kh * kw + i * kh * kw + h * kw + w);
-                        int dstIdx = (int)(o * kh * kw * ic + h * kw * ic + w * ic + i);
-                        dstData[dstIdx] = srcData[srcIdx];
-                    }
-                }
-            }
-        }
-
-        return Tensor.ofFloats(new long[]{oc, kh, kw, ic}, dstData);
-    }
-
-    /**
      * Construct the MNIST model and load pre-trained weights.
      */
     public MNISTModel() {
-        // Load and transpose conv weights (ONNX OIHW -> TOSA OHWI)
-        Tensor<Float> conv1WeightsRaw = load("mnist/conv1-weight-float-le", 6, 1, 5, 5);
-        conv1Weights = transposeConvWeights(conv1WeightsRaw, 6, 1, 5, 5);
+        // Load conv weights in ONNX OIHW layout and transpose to TOSA OHWI layout
+        conv1Weights = TosaModelExporter.transposeOIHWtoOHWI(load("mnist/conv1-weight-float-le", 6, 1, 5, 5));
         conv1Bias = load("mnist/conv1-bias-float-le", 6);
 
-        Tensor<Float> conv2WeightsRaw = load("mnist/conv2-weight-float-le", 16, 6, 5, 5);
-        conv2Weights = transposeConvWeights(conv2WeightsRaw, 16, 6, 5, 5);
+        conv2Weights = TosaModelExporter.transposeOIHWtoOHWI(load("mnist/conv2-weight-float-le", 16, 6, 5, 5));
         conv2Bias = load("mnist/conv2-bias-float-le", 16);
 
         // FC weights: transpose from [out, in] to [in, out] for matmul

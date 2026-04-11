@@ -158,12 +158,21 @@ public final class Tensor<T> {
     }
 
     /**
-     * Create a tensor from raw bytes (little-endian float32).
-     * Useful for loading pre-trained weights from binary files.
+     * Create a FLOAT32 tensor from a raw byte array in <b>little-endian</b> IEEE 754 format.
      *
-     * @param shape Tensor shape
-     * @param bytes Raw bytes (little-endian float32)
-     * @return Float tensor with loaded data
+     * <p>Each group of 4 bytes is interpreted as one {@code float} value in
+     * little-endian byte order (least-significant byte first), regardless of
+     * the host platform's native endianness. This matches the format used by
+     * ONNX weight files and most neural-network binary checkpoints.
+     *
+     * <p>Passing data in any other byte order (e.g. big-endian or native-endian
+     * on a big-endian host) will produce silently incorrect results.
+     *
+     * @param shape Tensor shape; {@code shape[0] * shape[1] * … * shape[n-1] * 4}
+     *              must equal {@code bytes.length}
+     * @param bytes Raw weight data in little-endian float32 layout
+     * @return FLOAT32 tensor with the decoded values
+     * @throws IllegalArgumentException if {@code bytes.length != numElements * 4}
      */
     @SuppressWarnings("unchecked")
     public static Tensor<Float> ofBytes(long[] shape, byte[] bytes) {
