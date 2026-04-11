@@ -637,7 +637,7 @@ public final class TosaCodeGenerator {
             }
             case JavaOp.FieldAccessOp.FieldLoadOp flo -> {
                 // Field loads - check if this is a weight tensor field
-                String fieldName = flo.fieldDescriptor().name();
+                String fieldName = flo.fieldReference().name();
                 if (ctx.weights != null && ctx.weights.containsKey(fieldName)) {
                     TosaModelExporter.WeightInfo weight = ctx.weights.get(fieldName);
                     MemorySegment constValue = createConstantTensor(function, weight, ctx);
@@ -705,8 +705,8 @@ public final class TosaCodeGenerator {
      */
     private static MemorySegment processInvokeOp(JavaOp.InvokeOp invokeOp, GeneratorContext ctx,
                                                   MemorySegment function) {
-        String methodRef = invokeOp.invokeDescriptor().toString();
-        String methodName = invokeOp.invokeDescriptor().name();
+        String methodRef = invokeOp.invokeReference().toString();
+        String methodName = invokeOp.invokeReference().name();
 
         // Check if this is a TOSA operation
         if (!methodRef.contains("TosaOperators::") && !methodRef.contains("Tensor::")) {
