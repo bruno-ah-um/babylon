@@ -212,16 +212,19 @@ public class TosaSimpleTest {
     }
 
     /**
-     * Test type validation (should fail on mismatched types)
+     * Test type promotion: adding a FLOAT32 tensor and an INT32 tensor should succeed
+     * by implicitly promoting INT32 → FLOAT32 before the operation.
      */
     @Test
     @SuppressWarnings({"rawtypes", "unchecked"})
-    public void testTypeMismatch() {
-        Tensor a = Tensor.ofFlat(1.0f, 2.0f, 3.0f);  // Float
-        Tensor b = Tensor.ofFlat(4, 5, 6);            // Integer
+    public void testTypePromotion() {
+        Tensor a = Tensor.ofFlat(1.0f, 2.0f, 3.0f);  // FLOAT32
+        Tensor b = Tensor.ofFlat(4, 5, 6);            // INT32 → promoted to FLOAT32
 
-        // This will fail at runtime due to type mismatch
-        assertThrows(IllegalArgumentException.class, () -> Add(a, b));
+        Tensor result = Add(a, b);
+
+        assertEquals(Tensor.ElementType.FLOAT32, result.elementType());
+        assertEquals(Tensor.ofFlat(5.0f, 7.0f, 9.0f), result);
     }
 
     /**

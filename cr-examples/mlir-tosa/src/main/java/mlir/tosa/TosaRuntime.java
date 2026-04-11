@@ -413,14 +413,70 @@ public final class TosaRuntime {
     }
 
     /**
-     * Execute a binary operation with full broadcasting support.
-     * Handles scalar, 2D, and 4D broadcasting.
+     * Promotion hierarchy for binary operations on mixed element types.
+     *
+     * <pre>
+     *   INT32  + INT64  → INT64
+     *   INT32  + FLOAT32 → FLOAT32
+     *   INT32  + FLOAT64 → FLOAT64
+     *   INT64  + FLOAT32 → FLOAT32
+     *   INT64  + FLOAT64 → FLOAT64
+     *   FLOAT32 + FLOAT64 → FLOAT64
+     * </pre>
+     *
+     * When the two types are the same the input is returned unchanged.
      */
+    static Tensor.ElementType promoteTypes(Tensor.ElementType a, Tensor.ElementType b) {
+        if (a == b) return a;
+        if (a == Tensor.ElementType.FLOAT64 || b == Tensor.ElementType.FLOAT64) return Tensor.ElementType.FLOAT64;
+        if (a == Tensor.ElementType.FLOAT32 || b == Tensor.ElementType.FLOAT32) return Tensor.ElementType.FLOAT32;
+        return Tensor.ElementType.INT64; // INT32 + INT64
+    }
+
+    /**
+     * Cast all elements of {@code input} to {@code targetType}.
+     * Uses {@code double} as the lossless intermediate representation for float types;
+     * integer types are widened or narrowed with standard Java semantics.
+     */
+    @SuppressWarnings("unchecked")
+    static <T> Tensor<T> castTensor(Tensor<?> input, Tensor.ElementType targetType) {
+        if (input.elementType() == targetType) {
+            return (Tensor<T>) input;
+        }
+        Arena resultArena = Arena.ofAuto();
+        long numElements = input.numElements();
+        MemorySegment resultData = resultArena.allocate(targetType.valueLayout(), numElements);
+
+        for (long i = 0; i < numElements; i++) {
+            double val = switch (input.elementType()) {
+                case FLOAT32 -> input.data().getAtIndex(ValueLayout.JAVA_FLOAT, i);
+                case FLOAT64 -> input.data().getAtIndex(ValueLayout.JAVA_DOUBLE, i);
+                case INT32   -> input.data().getAtIndex(ValueLayout.JAVA_INT, i);
+                case INT64   -> input.data().getAtIndex(ValueLayout.JAVA_LONG, i);
+            };
+            switch (targetType) {
+                case FLOAT32 -> resultData.setAtIndex(ValueLayout.JAVA_FLOAT, i, (float) val);
+                case FLOAT64 -> resultData.setAtIndex(ValueLayout.JAVA_DOUBLE, i, val);
+                case INT32   -> resultData.setAtIndex(ValueLayout.JAVA_INT, i, (int) val);
+                case INT64   -> resultData.setAtIndex(ValueLayout.JAVA_LONG, i, (long) val);
+            }
+        }
+        return Tensor.ofRaw(resultArena, input.shape(), targetType, resultData);
+    }
+
+    /**
+     * Execute a binary operation with full broadcasting support.
+     * When the two input tensors have different element types, the narrower type is
+     * promoted to the wider type before the operation (see {@link #promoteTypes}).
+     */
+    @SuppressWarnings("unchecked")
     private <T> Tensor<T> executeBinaryOpWithBroadcast(Tensor<T> input1, Tensor<T> input2, String opName) {
         if (input1.elementType() != input2.elementType()) {
-            throw new IllegalArgumentException(
-                "Element type mismatch: " + input1.elementType() + " vs " + input2.elementType()
-            );
+            Tensor.ElementType promoted = promoteTypes(input1.elementType(), input2.elementType());
+            return executeBinaryOpWithBroadcast(
+                (Tensor<T>) castTensor(input1, promoted),
+                (Tensor<T>) castTensor(input2, promoted),
+                opName);
         }
 
         long[] shape1 = input1.shape();
