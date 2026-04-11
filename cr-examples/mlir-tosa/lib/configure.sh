@@ -71,6 +71,12 @@ fi
 echo -e "${YELLOW}Configuring with CMake...${NC}"
 cmake -B build -DCMAKE_PREFIX_PATH="$LLVM_PREFIX" "$@"
 
+# Strip GCC-only flags that clang-tidy (clang) does not understand,
+# so that manual `clang-tidy -p lib/build` runs work correctly.
+if [ -f "build/compile_commands.json" ]; then
+    sed -i 's/-fno-lifetime-dse //g' build/compile_commands.json
+fi
+
 if [ $? -eq 0 ]; then
     echo -e "\n${GREEN}========================================${NC}"
     echo -e "${GREEN}Configuration successful!${NC}"

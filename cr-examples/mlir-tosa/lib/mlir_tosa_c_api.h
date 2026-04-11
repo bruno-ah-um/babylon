@@ -9,11 +9,11 @@ extern "C" {
 #endif
 
 /* Opaque handle types */
-typedef struct MLIRContext_* MLIRContextHandle;
-typedef struct MLIRModule_* MLIRModuleHandle;
-typedef struct MLIRFunction_* MLIRFunctionHandle;
-typedef struct MLIRValue_* MLIRValueHandle;
-typedef struct MLIRType_* MLIRTypeHandle;
+typedef struct MLIRContext_ *MLIRContextHandle;
+typedef struct MLIRModule_ *MLIRModuleHandle;
+typedef struct MLIRFunction_ *MLIRFunctionHandle;
+typedef struct MLIRValue_ *MLIRValueHandle;
+typedef struct MLIRType_ *MLIRTypeHandle;
 
 /* Result codes */
 typedef enum {
@@ -33,82 +33,61 @@ MLIRModuleHandle mlir_module_create(MLIRContextHandle context);
 void mlir_module_destroy(MLIRModuleHandle module);
 MLIRResultCode mlir_module_verify(MLIRModuleHandle module);
 MLIRResultCode mlir_module_dump(MLIRModuleHandle module);
-MLIRResultCode mlir_module_write_text(MLIRModuleHandle module, const char* filename);
-MLIRResultCode mlir_module_write_bytecode(MLIRModuleHandle module, const char* filename);
-char* mlir_module_to_string(MLIRModuleHandle module);
-void mlir_string_destroy(char* str);
+MLIRResultCode mlir_module_write_text(MLIRModuleHandle module, const char *filename);
+MLIRResultCode mlir_module_write_bytecode(MLIRModuleHandle module, const char *filename);
+char *mlir_module_to_string(MLIRModuleHandle module);
+void mlir_string_destroy(char *str);
 
 /* Type creation */
 MLIRTypeHandle mlir_type_create_f32(MLIRContextHandle context);
 MLIRTypeHandle mlir_type_create_f64(MLIRContextHandle context);
 MLIRTypeHandle mlir_type_create_i32(MLIRContextHandle context);
 MLIRTypeHandle mlir_type_create_i64(MLIRContextHandle context);
-MLIRTypeHandle mlir_type_create_tensor_ranked(MLIRContextHandle context,
-                                               const int64_t* shape,
-                                               size_t rank,
+MLIRTypeHandle mlir_type_create_tensor_ranked(MLIRContextHandle context, const int64_t *shape,
+                                              size_t rank, MLIRTypeHandle elementType);
+MLIRTypeHandle mlir_type_create_tensor_dynamic(MLIRContextHandle context, size_t rank,
                                                MLIRTypeHandle elementType);
-MLIRTypeHandle mlir_type_create_tensor_dynamic(MLIRContextHandle context,
-                                                size_t rank,
-                                                MLIRTypeHandle elementType);
 void mlir_type_destroy(MLIRTypeHandle type);
 
 /* Function creation */
-MLIRFunctionHandle mlir_function_create(MLIRModuleHandle module,
-                                        const char* name,
-                                        MLIRTypeHandle* inputTypes,
-                                        size_t numInputs,
-                                        MLIRTypeHandle* outputTypes,
-                                        size_t numOutputs);
+MLIRFunctionHandle mlir_function_create(MLIRModuleHandle module, const char *name,
+                                        MLIRTypeHandle *inputTypes, size_t numInputs,
+                                        MLIRTypeHandle *outputTypes, size_t numOutputs);
 void mlir_function_destroy(MLIRFunctionHandle function);
 MLIRValueHandle mlir_function_get_argument(MLIRFunctionHandle function, size_t index);
 
 /* TOSA operations */
-MLIRValueHandle mlir_tosa_add(MLIRFunctionHandle function,
-                              MLIRValueHandle lhs,
-                              MLIRValueHandle rhs,
+MLIRValueHandle mlir_tosa_add(MLIRFunctionHandle function, MLIRValueHandle lhs, MLIRValueHandle rhs,
                               MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_sub(MLIRFunctionHandle function,
-                              MLIRValueHandle lhs,
-                              MLIRValueHandle rhs,
+MLIRValueHandle mlir_tosa_sub(MLIRFunctionHandle function, MLIRValueHandle lhs, MLIRValueHandle rhs,
                               MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_mul(MLIRFunctionHandle function,
-                              MLIRValueHandle lhs,
-                              MLIRValueHandle rhs,
+MLIRValueHandle mlir_tosa_mul(MLIRFunctionHandle function, MLIRValueHandle lhs, MLIRValueHandle rhs,
                               MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_negate(MLIRFunctionHandle function,
-                                 MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_negate(MLIRFunctionHandle function, MLIRValueHandle input,
                                  MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_reciprocal(MLIRFunctionHandle function,
-                                     MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_reciprocal(MLIRFunctionHandle function, MLIRValueHandle input,
                                      MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_exp(MLIRFunctionHandle function,
-                              MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_exp(MLIRFunctionHandle function, MLIRValueHandle input,
                               MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_log(MLIRFunctionHandle function,
-                              MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_log(MLIRFunctionHandle function, MLIRValueHandle input,
                               MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_matmul(MLIRFunctionHandle function,
-                                 MLIRValueHandle lhs,
-                                 MLIRValueHandle rhs,
-                                 MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_matmul(MLIRFunctionHandle function, MLIRValueHandle lhs,
+                                 MLIRValueHandle rhs, MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_relu(MLIRFunctionHandle function,
-                               MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_relu(MLIRFunctionHandle function, MLIRValueHandle input,
                                MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_sigmoid(MLIRFunctionHandle function,
-                                  MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_sigmoid(MLIRFunctionHandle function, MLIRValueHandle input,
                                   MLIRTypeHandle resultType);
 
-MLIRValueHandle mlir_tosa_tanh(MLIRFunctionHandle function,
-                               MLIRValueHandle input,
+MLIRValueHandle mlir_tosa_tanh(MLIRFunctionHandle function, MLIRValueHandle input,
                                MLIRTypeHandle resultType);
 
 /**
@@ -125,14 +104,10 @@ MLIRValueHandle mlir_tosa_tanh(MLIRFunctionHandle function,
  * @param resultType Result tensor type
  * @return Result value handle
  */
-MLIRValueHandle mlir_tosa_conv2d(MLIRFunctionHandle function,
-                                  MLIRValueHandle input,
-                                  MLIRValueHandle weight,
-                                  MLIRValueHandle bias,
-                                  const int64_t* pad,
-                                  const int64_t* stride,
-                                  const int64_t* dilation,
-                                  MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_conv2d(MLIRFunctionHandle function, MLIRValueHandle input,
+                                 MLIRValueHandle weight, MLIRValueHandle bias, const int64_t *pad,
+                                 const int64_t *stride, const int64_t *dilation,
+                                 MLIRTypeHandle resultType);
 
 /**
  * TOSA MaxPool2D operation.
@@ -146,12 +121,9 @@ MLIRValueHandle mlir_tosa_conv2d(MLIRFunctionHandle function,
  * @param resultType Result tensor type
  * @return Result value handle
  */
-MLIRValueHandle mlir_tosa_max_pool2d(MLIRFunctionHandle function,
-                                      MLIRValueHandle input,
-                                      const int64_t* kernel,
-                                      const int64_t* stride,
-                                      const int64_t* pad,
-                                      MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_max_pool2d(MLIRFunctionHandle function, MLIRValueHandle input,
+                                     const int64_t *kernel, const int64_t *stride,
+                                     const int64_t *pad, MLIRTypeHandle resultType);
 
 /**
  * TOSA AvgPool2D operation.
@@ -165,12 +137,9 @@ MLIRValueHandle mlir_tosa_max_pool2d(MLIRFunctionHandle function,
  * @param resultType Result tensor type
  * @return Result value handle
  */
-MLIRValueHandle mlir_tosa_avg_pool2d(MLIRFunctionHandle function,
-                                      MLIRValueHandle input,
-                                      const int64_t* kernel,
-                                      const int64_t* stride,
-                                      const int64_t* pad,
-                                      MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_avg_pool2d(MLIRFunctionHandle function, MLIRValueHandle input,
+                                     const int64_t *kernel, const int64_t *stride,
+                                     const int64_t *pad, MLIRTypeHandle resultType);
 
 /**
  * TOSA Reshape operation.
@@ -183,11 +152,9 @@ MLIRValueHandle mlir_tosa_avg_pool2d(MLIRFunctionHandle function,
  * @param resultType Result tensor type
  * @return Result value handle
  */
-MLIRValueHandle mlir_tosa_reshape(MLIRFunctionHandle function,
-                                   MLIRValueHandle input,
-                                   const int64_t* newShape,
-                                   size_t numDims,
-                                   MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_reshape(MLIRFunctionHandle function, MLIRValueHandle input,
+                                  const int64_t *newShape, size_t numDims,
+                                  MLIRTypeHandle resultType);
 
 /**
  * TOSA Reduce Sum operation.
@@ -199,10 +166,8 @@ MLIRValueHandle mlir_tosa_reshape(MLIRFunctionHandle function,
  * @param resultType Result tensor type
  * @return Result value handle
  */
-MLIRValueHandle mlir_tosa_reduce_sum(MLIRFunctionHandle function,
-                                      MLIRValueHandle input,
-                                      int64_t axis,
-                                      MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_reduce_sum(MLIRFunctionHandle function, MLIRValueHandle input,
+                                     int64_t axis, MLIRTypeHandle resultType);
 
 /**
  * TOSA Reduce Max operation.
@@ -214,10 +179,8 @@ MLIRValueHandle mlir_tosa_reduce_sum(MLIRFunctionHandle function,
  * @param resultType Result tensor type
  * @return Result value handle
  */
-MLIRValueHandle mlir_tosa_reduce_max(MLIRFunctionHandle function,
-                                      MLIRValueHandle input,
-                                      int64_t axis,
-                                      MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_reduce_max(MLIRFunctionHandle function, MLIRValueHandle input,
+                                     int64_t axis, MLIRTypeHandle resultType);
 
 /**
  * TOSA Const operation.
@@ -231,23 +194,19 @@ MLIRValueHandle mlir_tosa_reduce_max(MLIRFunctionHandle function,
  * @param resultType Result tensor type (must match shape and f32 element type)
  * @return Value handle for the constant tensor
  */
-MLIRValueHandle mlir_tosa_const_f32(MLIRFunctionHandle function,
-                                     const float* data,
-                                     size_t numElements,
-                                     const int64_t* shape,
-                                     size_t numDims,
-                                     MLIRTypeHandle resultType);
+MLIRValueHandle mlir_tosa_const_f32(MLIRFunctionHandle function, const float *data,
+                                    size_t numElements, const int64_t *shape, size_t numDims,
+                                    MLIRTypeHandle resultType);
 
 /* Function finalization */
-MLIRResultCode mlir_function_add_return(MLIRFunctionHandle function,
-                                        MLIRValueHandle* values,
+MLIRResultCode mlir_function_add_return(MLIRFunctionHandle function, MLIRValueHandle *values,
                                         size_t numValues);
 
 /* Value operations */
 void mlir_value_destroy(MLIRValueHandle value);
 
 /* Error handling */
-const char* mlir_get_last_error(void);
+const char *mlir_get_last_error(void);
 
 #ifdef __cplusplus
 }

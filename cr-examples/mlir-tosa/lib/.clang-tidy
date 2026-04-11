@@ -1,0 +1,17 @@
+---
+Checks: >
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-owning-memory,
+  modernize-*,
+  readability-*,
+  performance-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-using,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -readability-identifier-length,
+  -performance-enum-size
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*\.h$'
+FormatStyle: file
