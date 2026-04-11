@@ -328,6 +328,120 @@ public final class TosaCodeGenerator {
     }
 
     /**
+     * Generate TOSA MLIR code from a captured lambda (LambdaOp).
+     *
+     * This is the entry point for the TosaTransformer path: a Quotable lambda is
+     * captured via code reflection and transformed to TOSA MLIR.  Lambda parameters
+     * must all be {@code Tensor<?>} values; the output type is inferred as a dynamic
+     * tensor of the same element type as the first parameter.
+     *
+     * @param lambdaOp  The lambda operation from {@code Op.ofLambda()}
+     * @param funcName  Name for the generated MLIR function
+     * @param tensorRank Rank of input/output tensors (1 = 1-D dynamic, 2 = 2-D dynamic, …)
+     * @return TOSA MLIR text representation
+     */
+    public static String generateTosaFromLambda(JavaOp.LambdaOp lambdaOp, String funcName, int tensorRank) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment context = mlir_tosa_c_api_h.mlir_context_create();
+            if (context.equals(MemorySegment.NULL)) {
+                throw new RuntimeException("Failed to create MLIR context: " + getLastError());
+            }
+
+            MemorySegment module = mlir_tosa_c_api_h.mlir_module_create(context);
+            if (module.equals(MemorySegment.NULL)) {
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+                throw new RuntimeException("Failed to create MLIR module: " + getLastError());
+            }
+
+            try {
+                GeneratorContext ctx = new GeneratorContext(arena, context, tensorRank, null);
+
+                Block entryBlock = lambdaOp.body().entryBlock();
+                List<Block.Parameter> params = entryBlock.parameters();
+
+                // Build input types from lambda parameters
+                List<MemorySegment> inputTypes = new ArrayList<>();
+                List<Block.Parameter> tensorParams = new ArrayList<>();
+                for (Block.Parameter param : params) {
+                    if (!param.type().toString().contains("Tensor")) {
+                        continue; // skip captured non-tensor values
+                    }
+                    inputTypes.add(javaTypeToNativeTosaType(ctx, param.type(), tensorRank));
+                    tensorParams.add(param);
+                }
+
+                // Output type: dynamic tensor, element type inferred from first tensor param
+                MemorySegment elemType = tensorParams.isEmpty()
+                    ? mlir_tosa_c_api_h.mlir_type_create_f32(context)
+                    : inferElementType(ctx, tensorParams.get(0).type());
+                MemorySegment outputType = mlir_tosa_c_api_h.mlir_type_create_tensor_dynamic(
+                    context, tensorRank, elemType);
+
+                MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
+                for (int i = 0; i < inputTypes.size(); i++) {
+                    inputTypesArray.setAtIndex(ValueLayout.ADDRESS, i, inputTypes.get(i));
+                }
+                MemorySegment outputTypesArray = arena.allocate(ValueLayout.ADDRESS, 1);
+                outputTypesArray.setAtIndex(ValueLayout.ADDRESS, 0, outputType);
+
+                MemorySegment funcNameNative = arena.allocateFrom(funcName);
+                MemorySegment function = mlir_tosa_c_api_h.mlir_function_create(
+                    module, funcNameNative,
+                    inputTypesArray, inputTypes.size(),
+                    outputTypesArray, 1);
+
+                if (function.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to create MLIR function: " + getLastError());
+                }
+
+                // Map tensor params to function arguments
+                for (int i = 0; i < tensorParams.size(); i++) {
+                    MemorySegment arg = mlir_tosa_c_api_h.mlir_function_get_argument(function, i);
+                    ctx.valueHandles.put(tensorParams.get(i), arg);
+                }
+
+                // Walk all ops in the lambda body
+                for (Op op : entryBlock.ops()) {
+                    processOp(op, ctx, function);
+                }
+
+                int verifyResult = mlir_tosa_c_api_h.mlir_module_verify(module);
+                if (verifyResult != 0) {
+                    throw new RuntimeException("MLIR module verification failed: " + getLastError());
+                }
+
+                MemorySegment strPtr = mlir_tosa_c_api_h.mlir_module_to_string(module);
+                if (strPtr.equals(MemorySegment.NULL)) {
+                    throw new RuntimeException("Failed to convert module to string: " + getLastError());
+                }
+
+                String result = strPtr.reinterpret(Long.MAX_VALUE).getString(0);
+                mlir_tosa_c_api_h.mlir_string_destroy(strPtr);
+                return result;
+
+            } finally {
+                mlir_tosa_c_api_h.mlir_module_destroy(module);
+                mlir_tosa_c_api_h.mlir_context_destroy(context);
+            }
+        }
+    }
+
+    /**
+     * Resolve element type from a Java {@code Tensor<T>} type string.
+     */
+    private static MemorySegment inferElementType(GeneratorContext ctx, TypeElement type) {
+        String typeStr = type.toString();
+        if (typeStr.contains("Tensor<java.lang.Double>") || typeStr.contains("Tensor<Double>")) {
+            return mlir_tosa_c_api_h.mlir_type_create_f64(ctx.context);
+        } else if (typeStr.contains("Tensor<java.lang.Integer>") || typeStr.contains("Tensor<Integer>")) {
+            return mlir_tosa_c_api_h.mlir_type_create_i32(ctx.context);
+        } else if (typeStr.contains("Tensor<java.lang.Long>") || typeStr.contains("Tensor<Long>")) {
+            return mlir_tosa_c_api_h.mlir_type_create_i64(ctx.context);
+        }
+        return mlir_tosa_c_api_h.mlir_type_create_f32(ctx.context); // default float32
+    }
+
+    /**
      * Generate TOSA MLIR code from a FuncOp with specified tensor rank and optional static shapes.
      *
      * @param funcOp The function operation from code reflection

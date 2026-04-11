@@ -66,13 +66,36 @@ public final class TosaRuntime {
      */
     public static <T> Tensor<T> executeConv2D(Tensor<T> input, Tensor<T> weight, Tensor<T> bias,
                                                long[] pad, long[] stride, long[] dilation) {
+        if (input.rank() != 4) {
+            throw new IllegalArgumentException(
+                "Conv2D input must be rank 4 [N, IH, IW, IC], got rank " + input.rank());
+        }
+        if (weight.rank() != 4) {
+            throw new IllegalArgumentException(
+                "Conv2D weight must be rank 4 [OC, KH, KW, IC], got rank " + weight.rank());
+        }
+        if (bias != null && bias.rank() != 1) {
+            throw new IllegalArgumentException(
+                "Conv2D bias must be rank 1 [OC], got rank " + bias.rank());
+        }
+
         long[] inputShape = input.shape();   // [N, IH, IW, IC]
         long[] weightShape = weight.shape(); // [OC, KH, KW, IC]
+
+        long IC = inputShape[3];
+        long weightIC = weightShape[3];
+        if (IC != weightIC) {
+            throw new IllegalArgumentException(
+                "Conv2D input channels (" + IC + ") must match weight input channels (" + weightIC + ")");
+        }
+        if (bias != null && bias.shape()[0] != weightShape[0]) {
+            throw new IllegalArgumentException(
+                "Conv2D bias length (" + bias.shape()[0] + ") must match output channels (" + weightShape[0] + ")");
+        }
 
         long N = inputShape[0];
         long IH = inputShape[1];
         long IW = inputShape[2];
-        long IC = inputShape[3];
 
         long OC = weightShape[0];
         long KH = weightShape[1];
@@ -270,6 +293,8 @@ public final class TosaRuntime {
                 case "Neg" -> -val;
                 case "Abs" -> Math.abs(val);
                 case "Sqrt" -> (float) Math.sqrt(val);
+                case "Sigmoid" -> 1.0f / (1.0f + (float) Math.exp(-val));
+                case "Tanh" -> (float) Math.tanh(val);
                 default -> throw new UnsupportedOperationException("Unknown unary op: " + opName);
             };
             resultData.setAtIndex(ValueLayout.JAVA_FLOAT, i, result);

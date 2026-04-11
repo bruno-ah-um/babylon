@@ -1,10 +1,10 @@
 package mlir.tosa;
 
 import java.lang.invoke.MethodHandles;
+import java.util.function.Supplier;
 import jdk.incubator.code.Op;
 import jdk.incubator.code.Quoted;
 import jdk.incubator.code.dialect.java.JavaOp;
-import java.util.function.Supplier;
 
 /**
  * Transformer for converting Java code to MLIR TOSA operations via code reflection.
@@ -41,11 +41,17 @@ public final class TosaTransformer {
             System.out.println(quoted.op());
         }
 
-        // For now, execute the lambda directly
-        // Future implementation will:
-        // 1. Analyze the Quoted op tree
-        // 2. Build MLIR TOSA operations via C API
-        // 3. Compile and execute through MLIR
+        // For now, execute the lambda directly via Java runtime.
+        // When tosa.debug is set, also generate and print the MLIR representation.
+        if (Boolean.getBoolean("tosa.debug")) {
+            try {
+                String mlir = transformToMlirTosa(quoted);
+                System.out.println("Generated MLIR TOSA:");
+                System.out.println(mlir);
+            } catch (Exception e) {
+                System.out.println("MLIR generation skipped: " + e.getMessage());
+            }
+        }
         return quotableLambda.get();
     }
 
@@ -75,20 +81,37 @@ public final class TosaTransformer {
     }
 
     /**
-     * Future: Full transformation pipeline to MLIR TOSA.
+     * Transform a Quoted lambda to MLIR TOSA text representation.
      *
-     * This will implement:
-     * 1. Extract lambda body from Quoted
-     * 2. Inline method calls (identify Add, Mul operations)
-     * 3. Build MLIR function via C API
-     * 4. Add TOSA operations (tosa.add, tosa.mul)
-     * 5. Compile and execute
+     * <p>Pipeline:
+     * <ol>
+     *   <li>Validate that the quoted operation is a {@code LambdaOp}.</li>
+     *   <li>Walk the lambda body, mapping {@code TosaOperators} call sites to native
+     *       MLIR TOSA operations via the C API.</li>
+     *   <li>Serialize the resulting MLIR module to a string.</li>
+     * </ol>
+     *
+     * @param quoted Quoted lambda captured via {@code Op.ofLambda()}
+     * @param tensorRank Rank of tensors used in the lambda (1 = 1-D, 2 = 2-D, …)
+     * @return TOSA MLIR text for the lambda body
+     * @throws IllegalArgumentException if the quoted operation is not a lambda
      */
-    public static void transformToMlirTosa(Quoted<?> quoted) {
-        throw new UnsupportedOperationException(
-            "Full MLIR TOSA transformation not yet implemented. " +
-            "This will analyze the Quoted operation tree and generate MLIR code. " +
-            "Current status: Code reflection is working, MLIR generation pending."
-        );
+    public static String transformToMlirTosa(Quoted<?> quoted, int tensorRank) {
+        Op op = quoted.op();
+        if (!(op instanceof JavaOp.LambdaOp lambdaOp)) {
+            throw new IllegalArgumentException(
+                "Expected a lambda expression, got: " + op.getClass().getSimpleName());
+        }
+        return TosaCodeGenerator.generateTosaFromLambda(lambdaOp, "lambda_func", tensorRank);
+    }
+
+    /**
+     * Transform a Quoted lambda to MLIR TOSA text representation using 1-D dynamic tensors.
+     *
+     * @param quoted Quoted lambda captured via {@code Op.ofLambda()}
+     * @return TOSA MLIR text for the lambda body
+     */
+    public static String transformToMlirTosa(Quoted<?> quoted) {
+        return transformToMlirTosa(quoted, 1);
     }
 }

@@ -150,6 +150,32 @@ public final class TosaOperators {
         return Clamp(input, 0.0f, Float.MAX_VALUE);
     }
 
+    /**
+     * TOSA Sigmoid activation - element-wise sigmoid function.
+     *
+     * output = 1 / (1 + exp(-x))
+     *
+     * @param input Input tensor
+     * @param <T> Element type
+     * @return Sigmoid activated tensor
+     */
+    public static <T> Tensor<T> Sigmoid(Tensor<T> input) {
+        return TosaInterpreter.interpretUnary("Sigmoid", input);
+    }
+
+    /**
+     * TOSA Tanh activation - element-wise hyperbolic tangent.
+     *
+     * output = tanh(x)
+     *
+     * @param input Input tensor
+     * @param <T> Element type
+     * @return Tanh activated tensor
+     */
+    public static <T> Tensor<T> Tanh(Tensor<T> input) {
+        return TosaInterpreter.interpretUnary("Tanh", input);
+    }
+
     // ========== Shape Operations ==========
 
     /**

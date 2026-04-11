@@ -1,6 +1,8 @@
 package mlir.tosa;
 
 import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentAllocator;
 import java.lang.foreign.ValueLayout;
@@ -14,6 +16,18 @@ import java.nio.file.Path;
  * a convenient API for invoking it with Java Tensor objects.
  */
 public final class CompiledFunction {
+
+    private static final MethodHandle FREE_HANDLE;
+
+    static {
+        try {
+            FREE_HANDLE = Linker.nativeLinker().downcallHandle(
+                Linker.nativeLinker().defaultLookup().find("free").orElseThrow(),
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+        } catch (Exception e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
 
     private final MethodHandle handle;
     private final String name;
@@ -139,8 +153,8 @@ public final class CompiledFunction {
             // The aligned pointer points to the actual data
             resultCopy.copyFrom(alignedPtr.reinterpret(resultElements * elementType.sizeInBytes()));
 
-            // Note: We should ideally free the malloc'd memory (allocatedPtr), but for simplicity we'll let it leak
-            // In production, you'd call free() on the allocatedPtr
+            // Free the malloc'd memory returned by the native function
+            FREE_HANDLE.invoke(allocatedPtr);
 
             return (Tensor<T>) Tensor.ofRaw(resultArena, resultShape, elementType, resultCopy);
 
