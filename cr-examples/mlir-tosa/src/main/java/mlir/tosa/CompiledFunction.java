@@ -1,6 +1,9 @@
 package mlir.tosa;
 
-import java.lang.foreign.*;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SegmentAllocator;
+import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Path;
 
@@ -74,7 +77,7 @@ public final class CompiledFunction {
             for (Tensor<?> tensor : tensors) {
                 MemorySegment data = tensor.data();
                 long[] shape = tensor.shape();
-                int rank = tensor.rank();
+                final int rank = tensor.rank();
 
                 args[argIndex++] = data;  // allocated ptr
                 args[argIndex++] = data;  // aligned ptr
@@ -97,7 +100,7 @@ public final class CompiledFunction {
             }
 
             // Use maxRank for the output tensor
-            int rank = maxRank;
+            final int rank = maxRank;
 
             // Invoke the native function
             // Returns a MemorySegment representing the return struct: { ptr, ptr, i64, [rank x i64], [rank x i64] }
@@ -108,7 +111,7 @@ public final class CompiledFunction {
             long offset = 0;
             MemorySegment allocatedPtr = resultStruct.get(ValueLayout.ADDRESS, offset);
             offset += ValueLayout.ADDRESS.byteSize();
-            MemorySegment alignedPtr = resultStruct.get(ValueLayout.ADDRESS, offset);
+            final MemorySegment alignedPtr = resultStruct.get(ValueLayout.ADDRESS, offset);
             offset += ValueLayout.ADDRESS.byteSize();
             long resultOffset = resultStruct.get(ValueLayout.JAVA_LONG, offset);
             offset += ValueLayout.JAVA_LONG.byteSize();

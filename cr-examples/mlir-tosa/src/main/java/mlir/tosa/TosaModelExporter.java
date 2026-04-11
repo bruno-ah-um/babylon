@@ -60,7 +60,7 @@ public final class TosaModelExporter {
     public record ExportResult(
         String mlirCode,
         SequencedMap<String, WeightInfo> weights
-    ) {}
+    ) { }
 
     /**
      * Export a model to MLIR with embedded weights.

@@ -199,6 +199,22 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- Checkstyle style/convention analysis -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <configLocation>${project.basedir}/checkstyle.xml</configLocation>
+                    <failsOnError>true</failsOnError>
+                    <consoleOutput>true</consoleOutput>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- Clean Plugin to remove CMake build directory and generated bindings -->
             <plugin>
                 <artifactId>maven-clean-plugin</artifactId>

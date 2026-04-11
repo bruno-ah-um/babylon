@@ -4,7 +4,9 @@ package mlir.tosa;
 // import mlir.tosa.bindings.*;
 // import static mlir.tosa.bindings.mlir_tosa_c_api_h.*;
 
-import java.lang.foreign.*;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -76,9 +78,14 @@ public final class TosaRuntime {
         long KH = weightShape[1];
         long KW = weightShape[2];
 
-        long padTop = pad[0], padBottom = pad[1], padLeft = pad[2], padRight = pad[3];
-        long strideH = stride[0], strideW = stride[1];
-        long dilationH = dilation[0], dilationW = dilation[1];
+        long padTop = pad[0];
+        long padBottom = pad[1];
+        long padLeft = pad[2];
+        long padRight = pad[3];
+        long strideH = stride[0];
+        long strideW = stride[1];
+        long dilationH = dilation[0];
+        long dilationW = dilation[1];
 
         // Calculate output dimensions
         long OH = (IH + padTop + padBottom - dilationH * (KH - 1) - 1) / strideH + 1;
@@ -144,9 +151,14 @@ public final class TosaRuntime {
         long IW = inputShape[2];
         long C = inputShape[3];
 
-        long KH = kernel[0], KW = kernel[1];
-        long strideH = stride[0], strideW = stride[1];
-        long padTop = pad[0], padBottom = pad[1], padLeft = pad[2], padRight = pad[3];
+        long KH = kernel[0];
+        long KW = kernel[1];
+        long strideH = stride[0];
+        long strideW = stride[1];
+        long padTop = pad[0];
+        long padBottom = pad[1];
+        long padLeft = pad[2];
+        long padRight = pad[3];
 
         // Calculate output dimensions
         long OH = (IH + padTop + padBottom - KH) / strideH + 1;
@@ -274,7 +286,9 @@ public final class TosaRuntime {
         int rank = inputShape.length;
 
         // Handle negative axis
-        if (axis < 0) axis += rank;
+        if (axis < 0) {
+            axis += rank;
+        }
 
         // Calculate output shape
         long[] outputShape;
@@ -284,15 +298,21 @@ public final class TosaRuntime {
         } else {
             outputShape = new long[rank - 1];
             for (int i = 0, j = 0; i < rank; i++) {
-                if (i != axis) outputShape[j++] = inputShape[i];
+                if (i != axis) {
+                    outputShape[j++] = inputShape[i];
+                }
             }
-            if (outputShape.length == 0) outputShape = new long[]{1}; // scalar case
+            if (outputShape.length == 0) {
+                outputShape = new long[]{1}; // scalar case
+            }
         }
 
         Arena resultArena = Arena.ofAuto();
         Tensor.ElementType type = input.elementType();
         long numOutputElements = 1;
-        for (long dim : outputShape) numOutputElements *= dim;
+        for (long dim : outputShape) {
+            numOutputElements *= dim;
+        }
         MemorySegment resultData = resultArena.allocate(type.valueLayout(), numOutputElements);
 
         // Initialize output
@@ -446,6 +466,7 @@ public final class TosaRuntime {
                     long v2 = input2.data().getAtIndex(ValueLayout.JAVA_LONG, i);
                     resultData.setAtIndex(ValueLayout.JAVA_LONG, i, applyOpLong(v1, v2, opName));
                 }
+                default -> throw new IllegalStateException("Unknown element type: " + type);
             }
         }
 
@@ -487,7 +508,9 @@ public final class TosaRuntime {
         Arena resultArena = Arena.ofAuto();
         Tensor.ElementType type = input1.elementType();
         long numElements = 1;
-        for (long dim : outputShape) numElements *= dim;
+        for (long dim : outputShape) {
+            numElements *= dim;
+        }
         MemorySegment resultData = resultArena.allocate(type.valueLayout(), numElements);
 
         // Compute strides for output
@@ -520,8 +543,10 @@ public final class TosaRuntime {
             }
 
             // Compute input indices with broadcasting
-            long idx1 = 0, idx2 = 0;
-            long stride1 = 1, stride2 = 1;
+            long idx1 = 0;
+            long idx2 = 0;
+            long stride1 = 1;
+            long stride2 = 1;
             for (int d = rank - 1; d >= 0; d--) {
                 long i1 = shape1[d] == 1 ? 0 : indices[d];
                 long i2 = shape2[d] == 1 ? 0 : indices[d];
@@ -700,8 +725,8 @@ public final class TosaRuntime {
                     case INT32 -> {
                         int sum = 0;
                         for (long k = 0; k < K1; k++) {
-                            int v1 = input1.data().getAtIndex(ValueLayout.JAVA_INT, (int)(m * K1 + k));
-                            int v2 = input2.data().getAtIndex(ValueLayout.JAVA_INT, (int)(k * N + n));
+                            int v1 = input1.data().getAtIndex(ValueLayout.JAVA_INT, (int) (m * K1 + k));
+                            int v2 = input2.data().getAtIndex(ValueLayout.JAVA_INT, (int) (k * N + n));
                             sum += v1 * v2;
                         }
                         resultData.setAtIndex(ValueLayout.JAVA_INT, resultIdx, sum);
@@ -715,6 +740,7 @@ public final class TosaRuntime {
                         }
                         resultData.setAtIndex(ValueLayout.JAVA_LONG, resultIdx, sum);
                     }
+                    default -> throw new IllegalStateException("Unknown element type: " + type);
                 }
             }
         }
@@ -745,7 +771,8 @@ public final class TosaRuntime {
 
         if (K1 != K2) {
             throw new IllegalArgumentException(
-                "MatMul inner dimensions must match: [" + B1 + ", " + M + ", " + K1 + "] @ [" + B2 + ", " + K2 + ", " + N + "]"
+                "MatMul inner dimensions must match: ["
+                    + B1 + ", " + M + ", " + K1 + "] @ [" + B2 + ", " + K2 + ", " + N + "]"
             );
         }
 
@@ -772,8 +799,10 @@ public final class TosaRuntime {
                         case FLOAT32 -> {
                             float sum = 0.0f;
                             for (long k = 0; k < K1; k++) {
-                                float v1 = input1.data().getAtIndex(ValueLayout.JAVA_FLOAT, input1BatchOffset + m * K1 + k);
-                                float v2 = input2.data().getAtIndex(ValueLayout.JAVA_FLOAT, input2BatchOffset + k * N + n);
+                                float v1 = input1.data().getAtIndex(
+                                    ValueLayout.JAVA_FLOAT, input1BatchOffset + m * K1 + k);
+                                float v2 = input2.data().getAtIndex(
+                                    ValueLayout.JAVA_FLOAT, input2BatchOffset + k * N + n);
                                 sum += v1 * v2;
                             }
                             resultData.setAtIndex(ValueLayout.JAVA_FLOAT, resultIdx, sum);
@@ -781,8 +810,10 @@ public final class TosaRuntime {
                         case FLOAT64 -> {
                             double sum = 0.0;
                             for (long k = 0; k < K1; k++) {
-                                double v1 = input1.data().getAtIndex(ValueLayout.JAVA_DOUBLE, input1BatchOffset + m * K1 + k);
-                                double v2 = input2.data().getAtIndex(ValueLayout.JAVA_DOUBLE, input2BatchOffset + k * N + n);
+                                double v1 = input1.data().getAtIndex(
+                                    ValueLayout.JAVA_DOUBLE, input1BatchOffset + m * K1 + k);
+                                double v2 = input2.data().getAtIndex(
+                                    ValueLayout.JAVA_DOUBLE, input2BatchOffset + k * N + n);
                                 sum += v1 * v2;
                             }
                             resultData.setAtIndex(ValueLayout.JAVA_DOUBLE, resultIdx, sum);
@@ -790,8 +821,10 @@ public final class TosaRuntime {
                         case INT32 -> {
                             int sum = 0;
                             for (long k = 0; k < K1; k++) {
-                                int v1 = input1.data().getAtIndex(ValueLayout.JAVA_INT, (int)(input1BatchOffset + m * K1 + k));
-                                int v2 = input2.data().getAtIndex(ValueLayout.JAVA_INT, (int)(input2BatchOffset + k * N + n));
+                                int v1 = input1.data().getAtIndex(
+                                    ValueLayout.JAVA_INT, (int) (input1BatchOffset + m * K1 + k));
+                                int v2 = input2.data().getAtIndex(
+                                    ValueLayout.JAVA_INT, (int) (input2BatchOffset + k * N + n));
                                 sum += v1 * v2;
                             }
                             resultData.setAtIndex(ValueLayout.JAVA_INT, resultIdx, sum);
@@ -799,12 +832,15 @@ public final class TosaRuntime {
                         case INT64 -> {
                             long sum = 0;
                             for (long k = 0; k < K1; k++) {
-                                long v1 = input1.data().getAtIndex(ValueLayout.JAVA_LONG, input1BatchOffset + m * K1 + k);
-                                long v2 = input2.data().getAtIndex(ValueLayout.JAVA_LONG, input2BatchOffset + k * N + n);
+                                long v1 = input1.data().getAtIndex(
+                                    ValueLayout.JAVA_LONG, input1BatchOffset + m * K1 + k);
+                                long v2 = input2.data().getAtIndex(
+                                    ValueLayout.JAVA_LONG, input2BatchOffset + k * N + n);
                                 sum += v1 * v2;
                             }
                             resultData.setAtIndex(ValueLayout.JAVA_LONG, resultIdx, sum);
                         }
+                        default -> throw new IllegalStateException("Unknown element type: " + type);
                     }
                 }
             }
@@ -870,6 +906,7 @@ public final class TosaRuntime {
                     };
                     resultData.setAtIndex(ValueLayout.JAVA_LONG, i, result);
                 }
+                default -> throw new IllegalStateException("Unknown element type: " + type);
             }
         }
 

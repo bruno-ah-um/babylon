@@ -4,7 +4,13 @@ import jdk.incubator.code.Op;
 import jdk.incubator.code.dialect.core.CoreOp;
 
 import java.io.IOException;
-import java.lang.foreign.*;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemoryLayout;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -103,30 +109,42 @@ public final class TosaCompiler {
             Path tempDir = Files.createTempDirectory("tosa_compile_");
 
             Path tosaFile = tempDir.resolve(funcName + ".mlir");
-            Path llvmDialectFile = tempDir.resolve(funcName + "_llvm.mlir");
-            Path llvmIrFile = tempDir.resolve(funcName + ".ll");
-            Path soFile = tempDir.resolve("lib" + funcName + ".so");
+            final Path llvmDialectFile = tempDir.resolve(funcName + "_llvm.mlir");
+            final Path llvmIrFile = tempDir.resolve(funcName + ".ll");
+            final Path soFile = tempDir.resolve("lib" + funcName + ".so");
 
             // Step 1: Generate TOSA MLIR with the specified tensor rank
-            if (verbose) System.out.println("[TosaCompiler] Generating TOSA MLIR (rank=" + tensorRank + ")...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Generating TOSA MLIR (rank=" + tensorRank + ")...");
+            }
             String tosaMlir = TosaCodeGenerator.generateTosa(funcOp, funcName, tensorRank);
             Files.writeString(tosaFile, tosaMlir);
-            if (verbose) System.out.println("[TosaCompiler] TOSA MLIR:\n" + tosaMlir);
+            if (verbose) {
+                System.out.println("[TosaCompiler] TOSA MLIR:\n" + tosaMlir);
+            }
 
             // Step 2: Lower TOSA to LLVM dialect via mlir-opt
-            if (verbose) System.out.println("[TosaCompiler] Lowering TOSA -> LLVM dialect...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Lowering TOSA -> LLVM dialect...");
+            }
             runMlirOpt(tosaFile, llvmDialectFile, funcName);
 
             // Step 3: Translate LLVM dialect to LLVM IR
-            if (verbose) System.out.println("[TosaCompiler] Translating to LLVM IR...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Translating to LLVM IR...");
+            }
             runMlirTranslate(llvmDialectFile, llvmIrFile);
 
             // Step 4: Compile LLVM IR to shared library
-            if (verbose) System.out.println("[TosaCompiler] Compiling to shared library...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Compiling to shared library...");
+            }
             runClang(llvmIrFile, soFile);
 
             // Step 5: Load the shared library and create CompiledFunction
-            if (verbose) System.out.println("[TosaCompiler] Loading shared library: " + soFile);
+            if (verbose) {
+                System.out.println("[TosaCompiler] Loading shared library: " + soFile);
+            }
             return loadCompiledFunction(soFile, funcName, funcOp, tensorRank);
 
         } catch (IOException | InterruptedException e) {
@@ -149,9 +167,9 @@ public final class TosaCompiler {
             Path tempDir = Files.createTempDirectory("tosa_compile_");
 
             Path tosaFile = tempDir.resolve(funcName + ".mlir");
-            Path llvmDialectFile = tempDir.resolve(funcName + "_llvm.mlir");
-            Path llvmIrFile = tempDir.resolve(funcName + ".ll");
-            Path soFile = tempDir.resolve("lib" + funcName + ".so");
+            final Path llvmDialectFile = tempDir.resolve(funcName + "_llvm.mlir");
+            final Path llvmIrFile = tempDir.resolve(funcName + ".ll");
+            final Path soFile = tempDir.resolve("lib" + funcName + ".so");
 
             // Determine tensor rank from the first non-null shape
             int tensorRank = 4; // Default to 4D for Conv2D
@@ -163,25 +181,37 @@ public final class TosaCompiler {
             }
 
             // Step 1: Generate TOSA MLIR with static shapes
-            if (verbose) System.out.println("[TosaCompiler] Generating TOSA MLIR with static shapes...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Generating TOSA MLIR with static shapes...");
+            }
             String tosaMlir = TosaCodeGenerator.generateTosa(funcOp, funcName, paramShapes);
             Files.writeString(tosaFile, tosaMlir);
-            if (verbose) System.out.println("[TosaCompiler] TOSA MLIR:\n" + tosaMlir);
+            if (verbose) {
+                System.out.println("[TosaCompiler] TOSA MLIR:\n" + tosaMlir);
+            }
 
             // Step 2: Lower TOSA to LLVM dialect via mlir-opt
-            if (verbose) System.out.println("[TosaCompiler] Lowering TOSA -> LLVM dialect...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Lowering TOSA -> LLVM dialect...");
+            }
             runMlirOpt(tosaFile, llvmDialectFile, funcName);
 
             // Step 3: Translate LLVM dialect to LLVM IR
-            if (verbose) System.out.println("[TosaCompiler] Translating to LLVM IR...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Translating to LLVM IR...");
+            }
             runMlirTranslate(llvmDialectFile, llvmIrFile);
 
             // Step 4: Compile LLVM IR to shared library
-            if (verbose) System.out.println("[TosaCompiler] Compiling to shared library...");
+            if (verbose) {
+                System.out.println("[TosaCompiler] Compiling to shared library...");
+            }
             runClang(llvmIrFile, soFile);
 
             // Step 5: Load the shared library and create CompiledFunction
-            if (verbose) System.out.println("[TosaCompiler] Loading shared library: " + soFile);
+            if (verbose) {
+                System.out.println("[TosaCompiler] Loading shared library: " + soFile);
+            }
 
             // Extract per-parameter ranks from shapes
             int[] paramRanks = new int[paramShapes.length];
@@ -323,10 +353,6 @@ public final class TosaCompiler {
         return new CompiledFunction(handle, funcName, numParams, soFile, arena);
     }
 
-    private FunctionDescriptor buildFunctionDescriptor(int numParams) {
-        return buildFunctionDescriptor(numParams, 1); // Default to 1D tensors
-    }
-
     /**
      * Build function descriptor with per-parameter ranks.
      * This is needed for operations like Conv2D where different parameters have different ranks
@@ -388,9 +414,6 @@ public final class TosaCompiler {
      * @return Function descriptor for FFM
      */
     private FunctionDescriptor buildFunctionDescriptor(int numParams, int rank) {
-        // Values per tensor: 3 (base) + rank (sizes) + rank (strides) = 3 + 2*rank
-        int valuesPerTensor = 3 + 2 * rank;
-
         List<MemoryLayout> paramLayouts = new ArrayList<>();
 
         for (int i = 0; i < numParams; i++) {

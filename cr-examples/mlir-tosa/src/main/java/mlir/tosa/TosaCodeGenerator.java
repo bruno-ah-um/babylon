@@ -13,7 +13,6 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -141,7 +140,8 @@ public final class TosaCodeGenerator {
                 }
 
                 // Create output type
-                MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType(), tensorRank);
+                MemorySegment outputType = javaTypeToNativeTosaType(
+                    ctx, funcOp.invokableType().returnType(), tensorRank);
 
                 // Allocate arrays for input/output types
                 MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
@@ -263,7 +263,8 @@ public final class TosaCodeGenerator {
                 }
 
                 // Create output type (dynamic - MLIR will infer it)
-                MemorySegment outputType = javaTypeToNativeTosaType(ctx, funcOp.invokableType().returnType(), tensorRank);
+                MemorySegment outputType = javaTypeToNativeTosaType(
+                    ctx, funcOp.invokableType().returnType(), tensorRank);
 
                 // Allocate arrays for input/output types
                 MemorySegment inputTypesArray = arena.allocate(ValueLayout.ADDRESS, inputTypes.size());
@@ -718,7 +719,8 @@ public final class TosaCodeGenerator {
         // that won't be in valueHandles - we extract those separately
         List<Value> operands = invokeOp.operands();
         List<MemorySegment> operandHandles = new ArrayList<>();
-        boolean hasArrayOperands = methodName.equals("Conv2D") || methodName.equals("MaxPool2D") || methodName.equals("AvgPool2D") || methodName.equals("Reshape");
+        boolean hasArrayOperands = methodName.equals("Conv2D") || methodName.equals("MaxPool2D")
+            || methodName.equals("AvgPool2D") || methodName.equals("Reshape");
         for (Value operand : operands) {
             MemorySegment handle = ctx.valueHandles.get(operand);
             if (handle == null) {
@@ -840,17 +842,29 @@ public final class TosaCodeGenerator {
                     long[] stride = extractLongArrayFromOperand(invokeOp, 4, ctx);
                     long[] dilation = extractLongArrayFromOperand(invokeOp, 5, ctx);
 
-                    if (pad == null) pad = new long[]{0, 0, 0, 0};
-                    if (stride == null) stride = new long[]{1, 1};
-                    if (dilation == null) dilation = new long[]{1, 1};
+                    if (pad == null) {
+                        pad = new long[]{0, 0, 0, 0};
+                    }
+                    if (stride == null) {
+                        stride = new long[]{1, 1};
+                    }
+                    if (dilation == null) {
+                        dilation = new long[]{1, 1};
+                    }
 
                     MemorySegment padArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 4);
                     MemorySegment strideArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
                     MemorySegment dilationArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
 
-                    for (int i = 0; i < 4; i++) padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
-                    for (int i = 0; i < 2; i++) strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
-                    for (int i = 0; i < 2; i++) dilationArray.setAtIndex(ValueLayout.JAVA_LONG, i, dilation[i]);
+                    for (int i = 0; i < 4; i++) {
+                        padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        dilationArray.setAtIndex(ValueLayout.JAVA_LONG, i, dilation[i]);
+                    }
 
                     yield mlir_tosa_c_api_h.mlir_tosa_conv2d(function,
                         operandHandles.get(0), operandHandles.get(1), operandHandles.get(2),
@@ -868,17 +882,29 @@ public final class TosaCodeGenerator {
                     long[] stride = extractLongArrayFromOperand(invokeOp, 2, ctx);
                     long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
 
-                    if (kernel == null) kernel = new long[]{2, 2};
-                    if (stride == null) stride = new long[]{2, 2};
-                    if (pad == null) pad = new long[]{0, 0, 0, 0};
+                    if (kernel == null) {
+                        kernel = new long[]{2, 2};
+                    }
+                    if (stride == null) {
+                        stride = new long[]{2, 2};
+                    }
+                    if (pad == null) {
+                        pad = new long[]{0, 0, 0, 0};
+                    }
 
                     MemorySegment kernelArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
                     MemorySegment strideArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
                     MemorySegment padArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 4);
 
-                    for (int i = 0; i < 2; i++) kernelArray.setAtIndex(ValueLayout.JAVA_LONG, i, kernel[i]);
-                    for (int i = 0; i < 2; i++) strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
-                    for (int i = 0; i < 4; i++) padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+                    for (int i = 0; i < 2; i++) {
+                        kernelArray.setAtIndex(ValueLayout.JAVA_LONG, i, kernel[i]);
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
+                    }
+                    for (int i = 0; i < 4; i++) {
+                        padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+                    }
 
                     yield mlir_tosa_c_api_h.mlir_tosa_max_pool2d(function,
                         operandHandles.get(0),
@@ -894,17 +920,29 @@ public final class TosaCodeGenerator {
                     long[] stride = extractLongArrayFromOperand(invokeOp, 2, ctx);
                     long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
 
-                    if (kernel == null) kernel = new long[]{2, 2};
-                    if (stride == null) stride = new long[]{2, 2};
-                    if (pad == null) pad = new long[]{0, 0, 0, 0};
+                    if (kernel == null) {
+                        kernel = new long[]{2, 2};
+                    }
+                    if (stride == null) {
+                        stride = new long[]{2, 2};
+                    }
+                    if (pad == null) {
+                        pad = new long[]{0, 0, 0, 0};
+                    }
 
                     MemorySegment kernelArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
                     MemorySegment strideArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 2);
                     MemorySegment padArray = ctx.arena.allocate(ValueLayout.JAVA_LONG, 4);
 
-                    for (int i = 0; i < 2; i++) kernelArray.setAtIndex(ValueLayout.JAVA_LONG, i, kernel[i]);
-                    for (int i = 0; i < 2; i++) strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
-                    for (int i = 0; i < 4; i++) padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+                    for (int i = 0; i < 2; i++) {
+                        kernelArray.setAtIndex(ValueLayout.JAVA_LONG, i, kernel[i]);
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        strideArray.setAtIndex(ValueLayout.JAVA_LONG, i, stride[i]);
+                    }
+                    for (int i = 0; i < 4; i++) {
+                        padArray.setAtIndex(ValueLayout.JAVA_LONG, i, pad[i]);
+                    }
 
                     yield mlir_tosa_c_api_h.mlir_tosa_avg_pool2d(function,
                         operandHandles.get(0),
@@ -1095,7 +1133,8 @@ public final class TosaCodeGenerator {
      * @param ctx Generator context
      * @return The extracted long[] array, or null if not extractable (uses defaults)
      */
-    private static long[] extractLongArrayFromOperand(JavaOp.InvokeOp invokeOp, int operandIndex, GeneratorContext ctx) {
+    private static long[] extractLongArrayFromOperand(
+            JavaOp.InvokeOp invokeOp, int operandIndex, GeneratorContext ctx) {
         // For now, return null to use default values
         // TODO: Implement full constant array extraction from code model
         return null;

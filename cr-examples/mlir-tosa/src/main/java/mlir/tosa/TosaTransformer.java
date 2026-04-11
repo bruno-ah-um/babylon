@@ -3,7 +3,6 @@ package mlir.tosa;
 import java.lang.invoke.MethodHandles;
 import jdk.incubator.code.Op;
 import jdk.incubator.code.Quoted;
-import jdk.incubator.code.dialect.core.CoreOp;
 import jdk.incubator.code.dialect.java.JavaOp;
 import java.util.function.Supplier;
 

@@ -1,6 +1,8 @@
 package mlir.tosa;
 
-import java.lang.foreign.*;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 
 /**
@@ -80,6 +82,7 @@ public final class Tensor<T> {
             case FLOAT64 -> segment.set(ValueLayout.JAVA_DOUBLE, 0, (Double) value);
             case INT32 -> segment.set(ValueLayout.JAVA_INT, 0, (Integer) value);
             case INT64 -> segment.set(ValueLayout.JAVA_LONG, 0, (Long) value);
+            default -> throw new IllegalStateException("Unknown element type: " + type);
         }
 
         return new Tensor<>(arena, new long[0], type, segment);
@@ -106,6 +109,7 @@ public final class Tensor<T> {
                 case FLOAT64 -> segment.setAtIndex(ValueLayout.JAVA_DOUBLE, i, (Double) values[i]);
                 case INT32 -> segment.setAtIndex(ValueLayout.JAVA_INT, i, (Integer) values[i]);
                 case INT64 -> segment.setAtIndex(ValueLayout.JAVA_LONG, i, (Long) values[i]);
+                default -> throw new IllegalStateException("Unknown element type: " + type);
             }
         }
 
@@ -139,6 +143,7 @@ public final class Tensor<T> {
                 case FLOAT64 -> segment.setAtIndex(ValueLayout.JAVA_DOUBLE, i, (Double) values[i]);
                 case INT32 -> segment.setAtIndex(ValueLayout.JAVA_INT, i, (Integer) values[i]);
                 case INT64 -> segment.setAtIndex(ValueLayout.JAVA_LONG, i, (Long) values[i]);
+                default -> throw new IllegalStateException("Unknown element type: " + type);
             }
         }
 
@@ -164,7 +169,9 @@ public final class Tensor<T> {
     public static Tensor<Float> ofBytes(long[] shape, byte[] bytes) {
         Arena arena = Arena.ofAuto();
         long numElements = 1;
-        for (long dim : shape) numElements *= dim;
+        for (long dim : shape) {
+            numElements *= dim;
+        }
 
         if (bytes.length != numElements * 4) {
             throw new IllegalArgumentException(
@@ -200,7 +207,9 @@ public final class Tensor<T> {
     public static Tensor<Float> ofFloats(long[] shape, float[] data) {
         Arena arena = Arena.ofAuto();
         long numElements = 1;
-        for (long dim : shape) numElements *= dim;
+        for (long dim : shape) {
+            numElements *= dim;
+        }
 
         if (data.length != numElements) {
             throw new IllegalArgumentException(
@@ -393,12 +402,15 @@ public final class Tensor<T> {
         long displayLimit = Math.min(numElements, 10);
 
         for (int i = 0; i < displayLimit; i++) {
-            if (i > 0) sb.append(", ");
+            if (i > 0) {
+                sb.append(", ");
+            }
             switch (elementType) {
                 case FLOAT32 -> sb.append(data.getAtIndex(ValueLayout.JAVA_FLOAT, i));
                 case FLOAT64 -> sb.append(data.getAtIndex(ValueLayout.JAVA_DOUBLE, i));
                 case INT32 -> sb.append(data.getAtIndex(ValueLayout.JAVA_INT, i));
                 case INT64 -> sb.append(data.getAtIndex(ValueLayout.JAVA_LONG, i));
+                default -> throw new IllegalStateException("Unknown element type: " + elementType);
             }
         }
 
@@ -412,11 +424,19 @@ public final class Tensor<T> {
 
     @Override
     public boolean equals(Object obj) {
-        if (this == obj) return true;
-        if (!(obj instanceof Tensor<?> other)) return false;
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof Tensor<?> other)) {
+            return false;
+        }
 
-        if (!Arrays.equals(shape, other.shape)) return false;
-        if (elementType != other.elementType) return false;
+        if (!Arrays.equals(shape, other.shape)) {
+            return false;
+        }
+        if (elementType != other.elementType) {
+            return false;
+        }
 
         long numElements = numElements();
         for (int i = 0; i < numElements; i++) {
@@ -434,7 +454,9 @@ public final class Tensor<T> {
                 case INT64 -> data.getAtIndex(ValueLayout.JAVA_LONG, i) ==
                     other.data.getAtIndex(ValueLayout.JAVA_LONG, i);
             };
-            if (!equal) return false;
+            if (!equal) {
+                return false;
+            }
         }
 
         return true;
