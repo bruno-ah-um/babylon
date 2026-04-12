@@ -22,7 +22,7 @@ public final class TosaInterpreter {
      * @param <T> The tensor element type
      * @return The result tensor
      */
-    @SuppressWarnings("unchecked")
+    @SafeVarargs
     public static <T> Tensor<T> interpret(String opName, Tensor<T>... inputs) {
         // Delegate to the runtime for execution
         return (Tensor<T>) TosaRuntime.executeOperation(opName, inputs);

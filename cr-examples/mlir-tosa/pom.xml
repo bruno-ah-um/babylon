@@ -14,7 +14,7 @@
         <maven.compiler.target>26</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.0</junit.version>
-        <!-- Set to false to enable jextract if installed -->
+        <!-- Set to true to skip regenerating bindings with jextract (requires jextract on PATH) -->
         <skip.jextract>false</skip.jextract>
         <!--
           Set to true to skip native (CMake/LLVM) compilation.
@@ -223,7 +223,31 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- Clean Plugin to remove CMake build directory and generated bindings -->
+            <!-- Copy resolved native library into JAR resources under /native/ -->
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>bundle-native-lib</id>
+                        <phase>process-classes</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <skip>${skip.cmake}</skip>
+                            <target>
+                                <mkdir dir="${project.build.outputDirectory}/native"/>
+                                <exec executable="cp">
+                                    <arg value="-L"/>
+                                    <arg value="${project.basedir}/lib/build/libmlir_tosa_c.so"/>
+                                    <arg value="${project.build.outputDirectory}/native/libmlir_tosa_c.so"/>
+                                </exec>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- Clean Plugin to remove CMake build directory.
+                 Note: bindings are no longer deleted on clean (skip.jextract=true by default). -->
             <plugin>
                 <artifactId>maven-clean-plugin</artifactId>
                 <version>3.2.0</version>
@@ -231,10 +255,6 @@
                     <filesets>
                         <fileset>
                             <directory>${project.basedir}/lib/build</directory>
-                            <followSymlinks>false</followSymlinks>
-                        </fileset>
-                        <fileset>
-                            <directory>${project.basedir}/src/main/java/mlir/tosa/bindings</directory>
                             <followSymlinks>false</followSymlinks>
                         </fileset>
                     </filesets>

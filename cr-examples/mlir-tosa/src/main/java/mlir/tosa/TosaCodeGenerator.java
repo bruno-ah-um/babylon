@@ -28,6 +28,10 @@ import java.util.SequencedMap;
  */
 public final class TosaCodeGenerator {
 
+    // Ensure the native library is extracted from the JAR (if bundled) before
+    // mlir_tosa_c_api_h's static initializer tries to look it up.
+    static { TosaNativeLoader.ensureLoaded(); }
+
     private TosaCodeGenerator() {
         // Utility class
     }
