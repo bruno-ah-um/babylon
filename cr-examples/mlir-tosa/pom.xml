@@ -14,8 +14,12 @@
         <maven.compiler.target>26</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.0</junit.version>
-        <!-- Set to true to skip regenerating bindings with jextract (requires jextract on PATH) -->
-        <skip.jextract>false</skip.jextract>
+        <!--
+          Set to true to skip regenerating bindings with jextract (requires jextract on PATH).
+          Defaults to true: bindings are committed and should only be regenerated explicitly
+          when the C API changes (mvn generate-sources -Dskip.jextract=false).
+        -->
+        <skip.jextract>true</skip.jextract>
         <!--
           Set to true to skip native (CMake/LLVM) compilation.
           Use the 'no-native' profile for a full no-LLVM build:
@@ -274,6 +278,46 @@
       must still be present (do not run 'mvn clean' without LLVM available).
     -->
     <profiles>
+        <!--
+          Use -Pwith-examples to bundle the example/benchmark classes (from src/test/java)
+          into the main JAR, making them callable from the demo notebook.
+
+            mvn package -Pwith-examples -DskipTests
+        -->
+        <profile>
+            <id>with-examples</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <!-- Copy test classes into the main output directory in the
+                         process-test-classes phase: after test-compile but before the test
+                         phase. Tests still run from target/test-classes (surefire's classpath),
+                         so the copy does not affect test execution or incremental builds. -->
+                    <plugin>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>copy-example-classes</id>
+                                <phase>process-test-classes</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <copy todir="${project.build.outputDirectory}">
+                                            <fileset dir="${project.build.testOutputDirectory}"
+                                                     includes="**/*.class"/>
+                                        </copy>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <profile>
             <id>no-native</id>
             <properties>

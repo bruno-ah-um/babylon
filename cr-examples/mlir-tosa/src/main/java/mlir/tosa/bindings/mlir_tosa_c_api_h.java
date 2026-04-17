@@ -20,9 +20,23 @@ public class mlir_tosa_c_api_h extends mlir_tosa_c_api_h$shared {
 
     static final Arena LIBRARY_ARENA = Arena.ofAuto();
 
-    static final SymbolLookup SYMBOL_LOOKUP = SymbolLookup.libraryLookup(System.mapLibraryName("mlir_tosa_c"), LIBRARY_ARENA)
+    // libraryLookup does a dlopen() by name. When the library is bundled in the JAR and
+    // loaded by TosaNativeLoader via System.load(absolutePath), dlopen by name fails because
+    // the library is not on LD_LIBRARY_PATH and its embedded SONAME (libmlir_tosa_c.so.1)
+    // does not match the requested name (libmlir_tosa_c.so), so the already-loaded instance
+    // is not found. tryLibraryLookup() catches the failure and falls through to loaderLookup(),
+    // which finds the library that TosaNativeLoader already loaded into the process.
+    static final SymbolLookup SYMBOL_LOOKUP = tryLibraryLookup()
             .or(SymbolLookup.loaderLookup())
             .or(Linker.nativeLinker().defaultLookup());
+
+    private static SymbolLookup tryLibraryLookup() {
+        try {
+            return SymbolLookup.libraryLookup(System.mapLibraryName("mlir_tosa_c"), LIBRARY_ARENA);
+        } catch (IllegalArgumentException e) {
+            return name -> Optional.empty();
+        }
+    }
 
     private static final int _STDINT_H = (int)1L;
     /**

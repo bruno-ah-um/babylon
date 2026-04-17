@@ -29,6 +29,28 @@ import java.util.List;
  */
 public final class TosaCompiler {
 
+    /**
+     * Intermediate compilation stages, for inspection via {@link #generateAtStage}.
+     */
+    public enum Stage {
+        /** Input TOSA MLIR as generated from the code model. */
+        TOSA,
+        /** After lowering TOSA to Linalg + Arith + Tensor dialects. */
+        LINALG,
+        /** After full lowering to LLVM dialect, ready for mlir-translate. */
+        LLVM_DIALECT,
+        /** LLVM IR text produced by mlir-translate (the .ll file). */
+        LLVM_IR
+    }
+
+    private static final String LINALG_PIPELINE = "builtin.module(" +
+        "func.func(tosa-to-linalg-named)," +
+        "func.func(tosa-to-linalg)," +
+        "func.func(tosa-to-arith)," +
+        "func.func(tosa-to-tensor)," +
+        "func.func(linalg-fuse-elementwise-ops)" +
+        ")";
+
     private static final String MLIR_OPT = "/usr/lib/llvm-19/bin/mlir-opt";
     private static final String MLIR_TRANSLATE = "/usr/lib/llvm-19/bin/mlir-translate";
     private static final String CLANG = "clang";
@@ -41,6 +63,78 @@ public final class TosaCompiler {
 
     public TosaCompiler(boolean verbose) {
         this.verbose = verbose;
+    }
+
+    /**
+     * Return the MLIR text at the given lowering stage, using dynamic tensor shapes.
+     *
+     * @param method The @Reflect annotated method
+     * @param stage  The lowering stage to inspect
+     * @return MLIR text at that stage
+     */
+    public String generateAtStage(Method method, Stage stage) {
+        CoreOp.FuncOp funcOp = Op.ofMethod(method).orElseThrow(
+            () -> new IllegalArgumentException("Method is not reflectable: " + method.getName())
+        );
+        return generateAtStage(funcOp, method.getName(), stage, null);
+    }
+
+    /**
+     * Return the MLIR text at the given lowering stage, using static tensor shapes.
+     *
+     * @param method      The @Reflect annotated method
+     * @param stage       The lowering stage to inspect
+     * @param paramShapes Static shapes for each parameter (null entries use dynamic shapes)
+     * @return MLIR text at that stage
+     */
+    public String generateAtStage(Method method, Stage stage, long[][] paramShapes) {
+        CoreOp.FuncOp funcOp = Op.ofMethod(method).orElseThrow(
+            () -> new IllegalArgumentException("Method is not reflectable: " + method.getName())
+        );
+        return generateAtStage(funcOp, method.getName(), stage, paramShapes);
+    }
+
+    private String generateAtStage(CoreOp.FuncOp funcOp, String funcName, Stage stage, long[][] paramShapes) {
+        try {
+            String tosaMlir = (paramShapes != null)
+                ? TosaCodeGenerator.generateTosa(funcOp, funcName, paramShapes)
+                : TosaCodeGenerator.generateTosa(funcOp, funcName);
+
+            if (stage == Stage.TOSA) {
+                return tosaMlir;
+            }
+
+            Path tempDir = Files.createTempDirectory("tosa_stage_");
+            Path inputFile = tempDir.resolve(funcName + ".mlir");
+            Path outputFile = tempDir.resolve(funcName + "_out.mlir");
+            Files.writeString(inputFile, tosaMlir);
+
+            if (stage == Stage.LINALG) {
+                runMlirOptPipeline(inputFile, outputFile, LINALG_PIPELINE);
+            } else if (stage == Stage.LLVM_DIALECT) {
+                runMlirOpt(inputFile, outputFile, funcName);
+            } else {
+                // LLVM_IR: full mlir-opt pipeline, then mlir-translate to .ll
+                Path llvmDialectFile = tempDir.resolve(funcName + "_llvm.mlir");
+                runMlirOpt(inputFile, llvmDialectFile, funcName);
+                runMlirTranslate(llvmDialectFile, outputFile);
+            }
+
+            return Files.readString(outputFile);
+        } catch (IOException | InterruptedException e) {
+            throw new RuntimeException("Stage generation failed", e);
+        }
+    }
+
+    private void runMlirOptPipeline(Path inputFile, Path outputFile, String pipeline)
+            throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add(MLIR_OPT);
+        command.add(inputFile.toString());
+        command.add("--pass-pipeline=" + pipeline);
+        command.add("-o");
+        command.add(outputFile.toString());
+        runCommand(command, "mlir-opt");
     }
 
     /**
