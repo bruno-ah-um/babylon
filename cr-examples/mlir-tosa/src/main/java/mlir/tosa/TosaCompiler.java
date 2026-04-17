@@ -35,7 +35,7 @@ public final class TosaCompiler {
     public enum Stage {
         /** Input TOSA MLIR as generated from the code model. */
         TOSA,
-        /** After lowering TOSA to Linalg + Arith + Tensor dialects. */
+        /** After lowering TOSA to Linalg + Arith + Tensor dialects, with named ops generalized. */
         LINALG,
         /** After full lowering to LLVM dialect, ready for mlir-translate. */
         LLVM_DIALECT,
@@ -48,7 +48,8 @@ public final class TosaCompiler {
         "func.func(tosa-to-linalg)," +
         "func.func(tosa-to-arith)," +
         "func.func(tosa-to-tensor)," +
-        "func.func(linalg-fuse-elementwise-ops)" +
+        "func.func(linalg-fuse-elementwise-ops)," +
+        "func.func(linalg-generalize-named-ops)" +
         ")";
 
     private static final String MLIR_OPT = "/usr/lib/llvm-19/bin/mlir-opt";
@@ -109,14 +110,15 @@ public final class TosaCompiler {
             Path outputFile = tempDir.resolve(funcName + "_out.mlir");
             Files.writeString(inputFile, tosaMlir);
 
+            boolean hasStaticShapes = paramShapes != null;
             if (stage == Stage.LINALG) {
                 runMlirOptPipeline(inputFile, outputFile, LINALG_PIPELINE);
             } else if (stage == Stage.LLVM_DIALECT) {
-                runMlirOpt(inputFile, outputFile, funcName);
+                runMlirOpt(inputFile, outputFile, funcName, hasStaticShapes);
             } else {
                 // LLVM_IR: full mlir-opt pipeline, then mlir-translate to .ll
                 Path llvmDialectFile = tempDir.resolve(funcName + "_llvm.mlir");
-                runMlirOpt(inputFile, llvmDialectFile, funcName);
+                runMlirOpt(inputFile, llvmDialectFile, funcName, hasStaticShapes);
                 runMlirTranslate(llvmDialectFile, outputFile);
             }
 
@@ -284,11 +286,11 @@ public final class TosaCompiler {
                 System.out.println("[TosaCompiler] TOSA MLIR:\n" + tosaMlir);
             }
 
-            // Step 2: Lower TOSA to LLVM dialect via mlir-opt
+            // Step 2: Lower TOSA to LLVM dialect via mlir-opt (with vectorization for static shapes)
             if (verbose) {
-                System.out.println("[TosaCompiler] Lowering TOSA -> LLVM dialect...");
+                System.out.println("[TosaCompiler] Lowering TOSA -> LLVM dialect (vectorized)...");
             }
-            runMlirOpt(tosaFile, llvmDialectFile, funcName);
+            runMlirOpt(tosaFile, llvmDialectFile, funcName, true);
 
             // Step 3: Translate LLVM dialect to LLVM IR
             if (verbose) {
@@ -320,25 +322,73 @@ public final class TosaCompiler {
         }
     }
 
+    // Transform sequence for vectorization (requires static shapes).
+    // Injected into the MLIR module before running mlir-opt with transform-interpreter.
+    private static final String VECTORIZE_TRANSFORM =
+        "  transform.named_sequence @__transform_main(%arg0: !transform.any_op) {\n" +
+        "    %ops = transform.structured.match ops{[\"linalg.generic\"]} in %arg0" +
+        " : (!transform.any_op) -> !transform.any_op\n" +
+        "    transform.structured.vectorize %ops : !transform.any_op\n" +
+        "    transform.yield\n" +
+        "  }\n";
+
+    private void injectVectorizeTransform(Path mlirFile) throws IOException {
+        String mlir = Files.readString(mlirFile);
+        // Add transform.with_named_sequence attribute and embed the transform sequence
+        mlir = mlir.replace("module {", "module attributes {transform.with_named_sequence} {");
+        int lastBrace = mlir.lastIndexOf('}');
+        mlir = mlir.substring(0, lastBrace) + VECTORIZE_TRANSFORM + "}";
+        Files.writeString(mlirFile, mlir);
+    }
+
     private void runMlirOpt(Path inputFile, Path outputFile, String funcName) throws IOException, InterruptedException {
-        // MLIR lowering pipeline: TOSA -> Linalg -> Bufferization -> LLVM
+        runMlirOpt(inputFile, outputFile, funcName, false);
+    }
+
+    private void runMlirOpt(Path inputFile, Path outputFile, String funcName, boolean vectorize)
+            throws IOException, InterruptedException {
+        if (vectorize) {
+            injectVectorizeTransform(inputFile);
+        }
+
         List<String> command = new ArrayList<>();
         command.add(MLIR_OPT);
         command.add(inputFile.toString());
 
-        // Pipeline passes
         // Note: tosa-to-arith converts tosa.const -> arith.constant for bufferization
+        String vectorizePasses = vectorize
+            ? "transform-interpreter," +
+              "test-transform-dialect-erase-schedule," +
+              "func.func(canonicalize)," +
+              "func.func(cse),"
+            : "";
+
         command.add("--pass-pipeline=builtin.module(" +
+            // Propagate static shapes through TOSA before lowering
+            (vectorize ? "func.func(tosa-infer-shapes)," : "") +
+            // TOSA → Linalg
             "func.func(tosa-to-linalg-named)," +
             "func.func(tosa-to-linalg)," +
             "func.func(tosa-to-arith)," +
             "func.func(tosa-to-tensor)," +
+            // Linalg normalization
             "func.func(linalg-fuse-elementwise-ops)," +
+            // linalg-generalize-named-ops is skipped when vectorizing: named ops (conv, matmul) have
+            // non-identity indexing maps that transform.structured.vectorize cannot handle without
+            // tiling. Element-wise linalg.generic ops from tosa-to-linalg are vectorized directly.
+            (vectorize ? "" : "func.func(linalg-generalize-named-ops),") +
+            // Vectorization via Transform dialect (static shapes only)
+            vectorizePasses +
+            // Bufferization
             "one-shot-bufferize{bufferize-function-boundaries}," +
+            // Loop + vector lowering
             "func.func(convert-linalg-to-loops)," +
+            "func.func(convert-vector-to-scf)," +
             "func.func(lower-affine)," +
             "func.func(arith-expand)," +
             "func.func(convert-scf-to-cf)," +
+            // LLVM lowering
+            "convert-vector-to-llvm," +
             "convert-arith-to-llvm," +
             "convert-func-to-llvm," +
             "convert-cf-to-llvm," +
@@ -368,7 +418,8 @@ public final class TosaCompiler {
             CLANG,
             "-shared",
             "-fPIC",
-            "-O2",
+            "-O3",
+            "-march=native",
             "-o",
             outputFile.toString(),
             inputFile.toString()
