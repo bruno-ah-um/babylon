@@ -43,6 +43,14 @@ public final class TosaCompiler {
         LLVM_IR
     }
 
+    // TOSA → Linalg partial pipeline used for Stage.LINALG inspection.
+    // Pass sources (llvm-project/mlir/lib/):
+    //   tosa-to-linalg-named    Conversion/TosaToLinalg/TosaToLinalgNamed.cpp
+    //   tosa-to-linalg          Conversion/TosaToLinalg/TosaToLinalg.cpp
+    //   tosa-to-arith           Conversion/TosaToArith/TosaToArith.cpp
+    //   tosa-to-tensor          Conversion/TosaToTensor/TosaToTensor.cpp
+    //   linalg-fuse-elementwise-ops  Dialect/Linalg/Transforms/ElementwiseFusion.cpp
+    //   linalg-generalize-named-ops  Dialect/Linalg/Transforms/NamedOpConversions.cpp
     private static final String LINALG_PIPELINE = "builtin.module(" +
         "func.func(tosa-to-linalg-named)," +
         "func.func(tosa-to-linalg)," +
@@ -355,46 +363,114 @@ public final class TosaCompiler {
         command.add(MLIR_OPT);
         command.add(inputFile.toString());
 
-        // Note: tosa-to-arith converts tosa.const -> arith.constant for bufferization
-        String vectorizePasses = vectorize
-            ? "transform-interpreter," +
-              "test-transform-dialect-erase-schedule," +
-              "func.func(canonicalize)," +
-              "func.func(cse),"
-            : "";
+        // Full TOSA → LLVM dialect lowering pipeline.
+        // All pass sources are under llvm-project/mlir/lib/ unless noted.
+        // GitHub: https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/mlir/lib/
+        StringBuilder pipeline = new StringBuilder("builtin.module(");
 
-        command.add("--pass-pipeline=builtin.module(" +
-            // Propagate static shapes through TOSA before lowering
-            (vectorize ? "func.func(tosa-infer-shapes)," : "") +
-            // TOSA → Linalg
-            "func.func(tosa-to-linalg-named)," +
-            "func.func(tosa-to-linalg)," +
-            "func.func(tosa-to-arith)," +
-            "func.func(tosa-to-tensor)," +
-            // Linalg normalization
-            "func.func(linalg-fuse-elementwise-ops)," +
-            // linalg-generalize-named-ops is skipped when vectorizing: named ops (conv, matmul) have
-            // non-identity indexing maps that transform.structured.vectorize cannot handle without
-            // tiling. Element-wise linalg.generic ops from tosa-to-linalg are vectorized directly.
-            (vectorize ? "" : "func.func(linalg-generalize-named-ops),") +
-            // Vectorization via Transform dialect (static shapes only)
-            vectorizePasses +
-            // Bufferization
-            "one-shot-bufferize{bufferize-function-boundaries}," +
-            // Loop + vector lowering
-            "func.func(convert-linalg-to-loops)," +
-            "func.func(convert-vector-to-scf)," +
-            "func.func(lower-affine)," +
-            "func.func(arith-expand)," +
-            "func.func(convert-scf-to-cf)," +
-            // LLVM lowering
-            "convert-vector-to-llvm," +
-            "convert-arith-to-llvm," +
-            "convert-func-to-llvm," +
-            "convert-cf-to-llvm," +
-            "finalize-memref-to-llvm," +
-            "reconcile-unrealized-casts" +
-            ")");
+        if (vectorize) {
+            // Propagate static shapes through TOSA ops before lowering (enables vectorization).
+            // Dialect/Tosa/Transforms/TosaInferShapes.cpp
+            pipeline.append("func.func(tosa-infer-shapes),");
+        }
+
+        // TOSA conv/matmul/pool → named Linalg ops (linalg.conv_2d_nhwc_hwcf, linalg.matmul, …).
+        // Conversion/TosaToLinalg/TosaToLinalgNamed.cpp
+        pipeline.append("func.func(tosa-to-linalg-named),");
+
+        // TOSA elementwise ops → linalg.generic with scalar region.
+        // Conversion/TosaToLinalg/TosaToLinalg.cpp
+        pipeline.append("func.func(tosa-to-linalg),");
+
+        // tosa.const → arith.constant (required before bufferization).
+        // Conversion/TosaToArith/TosaToArith.cpp
+        pipeline.append("func.func(tosa-to-arith),");
+
+        // tosa.slice / tosa.pad / tosa.reshape → tensor dialect ops.
+        // Conversion/TosaToTensor/TosaToTensor.cpp
+        pipeline.append("func.func(tosa-to-tensor),");
+
+        // Fuse adjacent elementwise linalg.generic ops into a single op.
+        // Dialect/Linalg/Transforms/ElementwiseFusion.cpp
+        pipeline.append("func.func(linalg-fuse-elementwise-ops),");
+
+        if (!vectorize) {
+            // Lower named Linalg ops to linalg.generic with explicit indexing maps.
+            // Skipped when vectorizing: named ops (conv, matmul) have non-identity indexing
+            // maps that transform.structured.vectorize cannot handle without tiling first;
+            // elementwise linalg.generic ops produced by tosa-to-linalg are vectorized directly.
+            // Dialect/Linalg/Transforms/NamedOpConversions.cpp
+            pipeline.append("func.func(linalg-generalize-named-ops),");
+        }
+
+        if (vectorize) {
+            // Run the transform.named_sequence injected by injectVectorizeTransform().
+            // Dialect/Transform/Transforms/InterpreterPass.cpp
+            pipeline.append("transform-interpreter,");
+
+            // Erase the transform sequence ops after they have been applied.
+            // test/lib/Dialect/Transform/TestTransformDialectInterpreter.cpp
+            pipeline.append("test-transform-dialect-erase-schedule,");
+
+            // Fold constants and remove redundant ops after vectorization.
+            // Transforms/Canonicalizer.cpp
+            pipeline.append("func.func(canonicalize),");
+
+            // Eliminate redundant computations introduced during vectorization.
+            // Transforms/CSE.cpp
+            pipeline.append("func.func(cse),");
+        }
+
+        // One-shot analysis + bufferization: tensor semantics → memref (in-place where safe).
+        // Dialect/Bufferization/Transforms/OneShotBufferize.cpp
+        pipeline.append("one-shot-bufferize{bufferize-function-boundaries},");
+
+        // linalg.generic → scf.for loops.
+        // Dialect/Linalg/Transforms/Loops.cpp
+        pipeline.append("func.func(convert-linalg-to-loops),");
+
+        // vector.transfer_read/write → scf.for (scalar fallback path).
+        // Conversion/VectorToSCF/VectorToSCF.cpp
+        pipeline.append("func.func(convert-vector-to-scf),");
+
+        // affine.for / affine.if / affine maps → scf + arith.
+        // Conversion/AffineToStandard/AffineToStandard.cpp
+        pipeline.append("func.func(lower-affine),");
+
+        // Expand arith ops with no direct LLVM IR counterpart (e.g. ceildivsi → divsi + adjust).
+        // Dialect/Arith/Transforms/ExpandOps.cpp
+        pipeline.append("func.func(arith-expand),");
+
+        // scf.for / scf.if / scf.while → cf.br / cf.cond_br (unstructured CFG).
+        // Conversion/SCFToControlFlow/SCFToControlFlow.cpp
+        pipeline.append("func.func(convert-scf-to-cf),");
+
+        // vector ops → llvm.intr.* (SIMD intrinsics, shuffle, extract, insert, …).
+        // Conversion/VectorToLLVM/ConvertVectorToLLVM.cpp
+        pipeline.append("convert-vector-to-llvm,");
+
+        // arith.addi / arith.mulf / … → llvm.add / llvm.fmul / …
+        // Conversion/ArithToLLVM/ArithToLLVM.cpp
+        pipeline.append("convert-arith-to-llvm,");
+
+        // func.func / func.call / func.return → llvm.func / llvm.call / llvm.return.
+        // Conversion/FuncToLLVM/ConvertFuncToLLVM.cpp
+        pipeline.append("convert-func-to-llvm,");
+
+        // cf.br / cf.cond_br → llvm.br / llvm.cond_br.
+        // Conversion/ControlFlowToLLVM/ControlFlowToLLVM.cpp
+        pipeline.append("convert-cf-to-llvm,");
+
+        // memref → llvm.ptr with GEP arithmetic for multi-dimensional addressing.
+        // Conversion/MemRefToLLVM/MemRefToLLVM.cpp
+        pipeline.append("finalize-memref-to-llvm,");
+
+        // Remove unrealized_conversion_cast ops left by the conversion passes above.
+        // Transforms/ReconcileUnrealizedCasts.cpp
+        pipeline.append("reconcile-unrealized-casts");
+
+        pipeline.append(")");
+        command.add("--pass-pipeline=" + pipeline);
 
         command.add("-o");
         command.add(outputFile.toString());
