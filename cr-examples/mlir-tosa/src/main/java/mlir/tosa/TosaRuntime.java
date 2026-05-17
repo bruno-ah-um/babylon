@@ -7,8 +7,6 @@ package mlir.tosa;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Runtime for executing TOSA operations via MLIR C API.
@@ -20,12 +18,12 @@ public final class TosaRuntime {
 
     private static final TosaRuntime INSTANCE = new TosaRuntime();
 
+    @SuppressWarnings("unused") // Keeps the auto-arena alive for the lifetime of the singleton
     private final Arena arena;
+    @SuppressWarnings("unused") // TODO: use when jextract bindings are available
     private final MemorySegment context;
+    @SuppressWarnings("unused") // TODO: use when jextract bindings are available
     private final MemorySegment module;
-
-    // Cache for MLIR types
-    private final Map<Tensor.ElementType, MemorySegment> typeCache = new HashMap<>();
 
     private TosaRuntime() {
         this.arena = Arena.ofAuto();
@@ -695,38 +693,10 @@ public final class TosaRuntime {
     }
 
     /**
-     * Execute TOSA Add operation
-     */
-    private <T> Tensor<T> executeAdd(Tensor<T> input1, Tensor<T> input2) {
-        // For now, use direct Java computation
-        // TODO: Use MLIR C API when jextract bindings are available
-        return computeDirectly(input1, input2, "add");
-    }
-
-    /**
-     * Execute TOSA Mul operation
-     */
-    private <T> Tensor<T> executeMul(Tensor<T> input1, Tensor<T> input2) {
-        // For now, use direct Java computation
-        // TODO: Use MLIR C API when jextract bindings are available
-        return computeDirectly(input1, input2, "mul");
-    }
-
-    /**
-     * Execute TOSA Sub operation
-     */
-    private <T> Tensor<T> executeSub(Tensor<T> input1, Tensor<T> input2) {
-        // For now, use direct Java computation
-        // TODO: Use MLIR C API when jextract bindings are available
-        return computeDirectly(input1, input2, "sub");
-    }
-
-    /**
      * Execute TOSA MatMul operation
      * For 2D tensors: [M, K] @ [K, N] -> [M, N]
      * For 3D tensors (batched): [B, M, K] @ [B, K, N] -> [B, M, N]
      */
-    @SuppressWarnings("unchecked")
     private <T> Tensor<T> executeMatMul(Tensor<T> input1, Tensor<T> input2) {
         // Validate shapes for matrix multiplication
         long[] shape1 = input1.shape();
@@ -754,7 +724,6 @@ public final class TosaRuntime {
     /**
      * Execute 2D MatMul: [M, K] @ [K, N] -> [M, N]
      */
-    @SuppressWarnings("unchecked")
     private <T> Tensor<T> executeMatMul2D(Tensor<T> input1, Tensor<T> input2) {
         long[] shape1 = input1.shape();
         long[] shape2 = input2.shape();
@@ -832,7 +801,6 @@ public final class TosaRuntime {
     /**
      * Execute 3D batched MatMul: [B, M, K] @ [B, K, N] -> [B, M, N]
      */
-    @SuppressWarnings("unchecked")
     private <T> Tensor<T> executeMatMul3D(Tensor<T> input1, Tensor<T> input2) {
         long[] shape1 = input1.shape();
         long[] shape2 = input2.shape();
@@ -930,70 +898,6 @@ public final class TosaRuntime {
         return Tensor.ofRaw(resultArena, resultShape, type, resultData);
     }
 
-    /**
-     * Fallback: compute operation directly in Java (for proof of concept)
-     */
-    @SuppressWarnings("unchecked")
-    private <T> Tensor<T> computeDirectly(Tensor<T> input1, Tensor<T> input2, String opName) {
-        Arena resultArena = Arena.ofAuto();
-        long numElements = input1.numElements();
-
-        Tensor.ElementType type = input1.elementType();
-        MemorySegment resultData = resultArena.allocate(type.valueLayout(), numElements);
-
-        for (long i = 0; i < numElements; i++) {
-            switch (type) {
-                case FLOAT32 -> {
-                    float v1 = input1.data().getAtIndex(ValueLayout.JAVA_FLOAT, i);
-                    float v2 = input2.data().getAtIndex(ValueLayout.JAVA_FLOAT, i);
-                    float result = switch (opName) {
-                        case "add" -> v1 + v2;
-                        case "sub" -> v1 - v2;
-                        case "mul" -> v1 * v2;
-                        default -> throw new UnsupportedOperationException("Unknown op: " + opName);
-                    };
-                    resultData.setAtIndex(ValueLayout.JAVA_FLOAT, i, result);
-                }
-                case FLOAT64 -> {
-                    double v1 = input1.data().getAtIndex(ValueLayout.JAVA_DOUBLE, i);
-                    double v2 = input2.data().getAtIndex(ValueLayout.JAVA_DOUBLE, i);
-                    double result = switch (opName) {
-                        case "add" -> v1 + v2;
-                        case "sub" -> v1 - v2;
-                        case "mul" -> v1 * v2;
-                        default -> throw new UnsupportedOperationException("Unknown op: " + opName);
-                    };
-                    resultData.setAtIndex(ValueLayout.JAVA_DOUBLE, i, result);
-                }
-                case INT32 -> {
-                    int v1 = input1.data().getAtIndex(ValueLayout.JAVA_INT, i);
-                    int v2 = input2.data().getAtIndex(ValueLayout.JAVA_INT, i);
-                    int result = switch (opName) {
-                        case "add" -> v1 + v2;
-                        case "sub" -> v1 - v2;
-                        case "mul" -> v1 * v2;
-                        default -> throw new UnsupportedOperationException("Unknown op: " + opName);
-                    };
-                    resultData.setAtIndex(ValueLayout.JAVA_INT, i, result);
-                }
-                case INT64 -> {
-                    long v1 = input1.data().getAtIndex(ValueLayout.JAVA_LONG, i);
-                    long v2 = input2.data().getAtIndex(ValueLayout.JAVA_LONG, i);
-                    long result = switch (opName) {
-                        case "add" -> v1 + v2;
-                        case "sub" -> v1 - v2;
-                        case "mul" -> v1 * v2;
-                        default -> throw new UnsupportedOperationException("Unknown op: " + opName);
-                    };
-                    resultData.setAtIndex(ValueLayout.JAVA_LONG, i, result);
-                }
-                default -> throw new IllegalStateException("Unknown element type: " + type);
-            }
-        }
-
-        return Tensor.ofRaw(resultArena, input1.shape(), type, resultData);
-    }
-
     // TODO: Implement when jextract bindings are available
     // /**
     //  * Get or create MLIR element type
@@ -1012,9 +916,4 @@ public final class TosaRuntime {
         System.out.println("MLIR module dumping not yet implemented (requires jextract bindings)");
     }
 
-    // Functional interface for operation executors
-    @FunctionalInterface
-    private interface BinaryOpExecutor {
-        <T> Tensor<T> execute(TosaRuntime runtime, Tensor<T> input1, Tensor<T> input2);
-    }
 }

@@ -1180,12 +1180,10 @@ public class TosaCompilerTest {
         for (long dim : nativeResult.shape()) numElements *= dim;
 
         System.out.println("\nValue-by-value comparison:");
-        boolean allMatch = true;
         for (int i = 0; i < numElements; i++) {
             float nativeVal = nativeResult.data().getAtIndex(java.lang.foreign.ValueLayout.JAVA_FLOAT, i);
             float javaVal = javaResult.data().getAtIndex(java.lang.foreign.ValueLayout.JAVA_FLOAT, i);
             String match = Math.abs(nativeVal - javaVal) < 0.001f ? "MATCH" : "DIFFER";
-            if (!match.equals("MATCH")) allMatch = false;
             if (i < 6) { // Print first few
                 System.out.printf("  [%d] Native=%.4f, Java=%.4f (%s)%n", i, nativeVal, javaVal, match);
             }

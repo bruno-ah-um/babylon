@@ -1,7 +1,5 @@
 package mlir.tosa;
 
-import java.util.Arrays;
-
 /**
  * Compare TOSA results with expected ONNX results.
  * The expected values are taken from running the ONNX model.

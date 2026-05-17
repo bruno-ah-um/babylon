@@ -268,7 +268,7 @@ public class TosaMnistBenchmark {
         // Warmup Native
         System.out.print("Warming up Native (" + WARMUP_ITERATIONS + " iterations)...");
         for (int i = 0; i < WARMUP_ITERATIONS; i++) {
-            Tensor<Float> result = nativeConvLayers.invoke(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
+            nativeConvLayers.invoke(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
         }
         System.out.println(" done");
 
@@ -276,7 +276,7 @@ public class TosaMnistBenchmark {
         System.out.print("Measuring Java (" + MEASUREMENT_ITERATIONS + " iterations)...");
         long javaConvStart = System.nanoTime();
         for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
-            Tensor<Float> result = mnistConvLayers(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
+            mnistConvLayers(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
         }
         long javaConvTime = System.nanoTime() - javaConvStart;
         double javaConvAvgUs = (javaConvTime / 1000.0) / MEASUREMENT_ITERATIONS;
@@ -286,7 +286,7 @@ public class TosaMnistBenchmark {
         System.out.print("Measuring Native (" + MEASUREMENT_ITERATIONS + " iterations)...");
         long nativeConvStart = System.nanoTime();
         for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
-            Tensor<Float> result = nativeConvLayers.invoke(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
+            nativeConvLayers.invoke(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
         }
         long nativeConvTime = System.nanoTime() - nativeConvStart;
         double nativeConvAvgUs = (nativeConvTime / 1000.0) / MEASUREMENT_ITERATIONS;
@@ -315,7 +315,7 @@ public class TosaMnistBenchmark {
         // Warmup Native
         System.out.print("Warming up Native (" + WARMUP_ITERATIONS + " iterations)...");
         for (int i = 0; i < WARMUP_ITERATIONS; i++) {
-            Tensor<Float> result = nativeFcLayers.invoke(flatInput, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
+            nativeFcLayers.invoke(flatInput, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
         }
         System.out.println(" done");
 
@@ -323,7 +323,7 @@ public class TosaMnistBenchmark {
         System.out.print("Measuring Java (" + MEASUREMENT_ITERATIONS + " iterations)...");
         long javaFcStart = System.nanoTime();
         for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
-            Tensor<Float> result = mnistFcLayers(flatInput, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
+            mnistFcLayers(flatInput, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
         }
         long javaFcTime = System.nanoTime() - javaFcStart;
         double javaFcAvgUs = (javaFcTime / 1000.0) / MEASUREMENT_ITERATIONS;
@@ -333,7 +333,7 @@ public class TosaMnistBenchmark {
         System.out.print("Measuring Native (" + MEASUREMENT_ITERATIONS + " iterations)...");
         long nativeFcStart = System.nanoTime();
         for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
-            Tensor<Float> result = nativeFcLayers.invoke(flatInput, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
+            nativeFcLayers.invoke(flatInput, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
         }
         long nativeFcTime = System.nanoTime() - nativeFcStart;
         double nativeFcAvgUs = (nativeFcTime / 1000.0) / MEASUREMENT_ITERATIONS;
@@ -367,7 +367,7 @@ public class TosaMnistBenchmark {
         for (int i = 0; i < WARMUP_ITERATIONS; i++) {
             Tensor<Float> convOut = nativeConvLayers.invoke(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
             Tensor<Float> flat = TosaOperators.Reshape(convOut, new long[]{1, 1, 256});
-            Tensor<Float> result = nativeFcLayers.invoke(flat, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
+            nativeFcLayers.invoke(flat, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
         }
         System.out.println(" done");
 
@@ -377,7 +377,7 @@ public class TosaMnistBenchmark {
         for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
             Tensor<Float> convOut = mnistConvLayers(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
             Tensor<Float> flat = TosaOperators.Reshape(convOut, new long[]{1, 1, 256});
-            Tensor<Float> result = mnistFcLayers(flat, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
+            mnistFcLayers(flat, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
         }
         long javaFullTime = System.nanoTime() - javaFullStart;
         double javaFullAvgUs = (javaFullTime / 1000.0) / MEASUREMENT_ITERATIONS;
@@ -389,7 +389,7 @@ public class TosaMnistBenchmark {
         for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
             Tensor<Float> convOut = nativeConvLayers.invoke(input, conv1Weight, conv1Bias, conv2Weight, conv2Bias);
             Tensor<Float> flat = TosaOperators.Reshape(convOut, new long[]{1, 1, 256});
-            Tensor<Float> result = nativeFcLayers.invoke(flat, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
+            nativeFcLayers.invoke(flat, fc1Weight, fc1Bias, fc2Weight, fc2Bias, fc3Weight, fc3Bias);
         }
         long nativeFullTime = System.nanoTime() - nativeFullStart;
         double nativeFullAvgUs = (nativeFullTime / 1000.0) / MEASUREMENT_ITERATIONS;

@@ -71,7 +71,6 @@ public final class Tensor<T> {
     /**
      * Create a scalar tensor (0-dimensional)
      */
-    @SuppressWarnings("unchecked")
     public static <T> Tensor<T> ofScalar(T value) {
         Arena arena = Arena.ofAuto();
         ElementType type = ElementType.fromClass(value.getClass());
@@ -174,7 +173,6 @@ public final class Tensor<T> {
      * @return FLOAT32 tensor with the decoded values
      * @throws IllegalArgumentException if {@code bytes.length != numElements * 4}
      */
-    @SuppressWarnings("unchecked")
     public static Tensor<Float> ofBytes(long[] shape, byte[] bytes) {
         Arena arena = Arena.ofAuto();
         long numElements = 1;

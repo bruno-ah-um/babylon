@@ -1,16 +1,10 @@
 package mlir.tosa;
 
 import jdk.incubator.code.Op;
-import jdk.incubator.code.Quoted;
 import jdk.incubator.code.Reflect;
 import jdk.incubator.code.dialect.core.CoreOp;
-import jdk.incubator.code.dialect.java.JavaOp;
 
-import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
-import java.util.function.Supplier;
-
-import static mlir.tosa.TosaOperators.*;
 
 /**
  * Demo application showcasing code reflection for a classical neural network linear layer.

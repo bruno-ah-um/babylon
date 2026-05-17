@@ -127,11 +127,7 @@ public final class CompiledFunction {
             offset += ValueLayout.ADDRESS.byteSize();
             final MemorySegment alignedPtr = resultStruct.get(ValueLayout.ADDRESS, offset);
             offset += ValueLayout.ADDRESS.byteSize();
-            long resultOffset = resultStruct.get(ValueLayout.JAVA_LONG, offset);
             offset += ValueLayout.JAVA_LONG.byteSize();
-
-            // Read the output size from the struct
-            long outputSize = resultStruct.get(ValueLayout.JAVA_LONG, offset);
 
             // For dynamic tensors, we use the output size from the struct
             // (which is the max of input sizes for broadcasting)

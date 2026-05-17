@@ -17,7 +17,6 @@ import java.util.Random;
 import java.util.SequencedMap;
 
 import static mlir.tosa.TosaOperators.*;
-import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Benchmark comparing TOSA Native, TOSA Java, and ONNX Runtime performance.
@@ -129,7 +128,8 @@ public class TosaBenchmark {
         }
 
         // Pre-create tensors for TOSA benchmarks
-        Tensor<Float>[] inputTensors = new Tensor[NUM_RANDOM_INPUTS];
+        @SuppressWarnings("unchecked")
+        Tensor<Float>[] inputTensors = (Tensor<Float>[]) new Tensor[NUM_RANDOM_INPUTS];
         for (int i = 0; i < NUM_RANDOM_INPUTS; i++) {
             inputTensors[i] = Tensor.ofFloats(new long[]{1, 28, 28, 1}, randomInputs[i]);
         }

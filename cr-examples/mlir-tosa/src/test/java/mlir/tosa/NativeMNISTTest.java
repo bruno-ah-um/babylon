@@ -475,11 +475,9 @@ public class NativeMNISTTest {
 
             // Extract result shape
             long offset = 0;
-            MemorySegment allocatedPtr = resultStruct.get(ValueLayout.ADDRESS, offset);
             offset += ValueLayout.ADDRESS.byteSize();
             MemorySegment alignedPtr = resultStruct.get(ValueLayout.ADDRESS, offset);
             offset += ValueLayout.ADDRESS.byteSize();
-            long resultOffset = resultStruct.get(ValueLayout.JAVA_LONG, offset);
             offset += ValueLayout.JAVA_LONG.byteSize();
 
             long[] resultShape = new long[outputRank];

@@ -2,7 +2,6 @@ package mlir.tosa;
 
 import org.junit.jupiter.api.Test;
 import java.lang.invoke.MethodHandles;
-import jdk.incubator.code.Op;
 import jdk.incubator.code.Reflect;
 
 import static mlir.tosa.TosaOperators.*;

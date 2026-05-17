@@ -957,9 +957,9 @@ public final class TosaCodeGenerator {
             case "Conv2D" -> {
                 if (operandHandles.size() >= 3) {
                     // Extract constant array values from the invoke operands
-                    long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
-                    long[] stride = extractLongArrayFromOperand(invokeOp, 4, ctx);
-                    long[] dilation = extractLongArrayFromOperand(invokeOp, 5, ctx);
+                    long[] pad = extractLongArrayFromOperand(invokeOp, 3);
+                    long[] stride = extractLongArrayFromOperand(invokeOp, 4);
+                    long[] dilation = extractLongArrayFromOperand(invokeOp, 5);
 
                     if (pad == null) {
                         pad = new long[]{0, 0, 0, 0};
@@ -997,9 +997,9 @@ public final class TosaCodeGenerator {
             case "MaxPool2D" -> {
                 if (!operandHandles.isEmpty()) {
                     // Extract constant array values from the invoke operands
-                    long[] kernel = extractLongArrayFromOperand(invokeOp, 1, ctx);
-                    long[] stride = extractLongArrayFromOperand(invokeOp, 2, ctx);
-                    long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
+                    long[] kernel = extractLongArrayFromOperand(invokeOp, 1);
+                    long[] stride = extractLongArrayFromOperand(invokeOp, 2);
+                    long[] pad = extractLongArrayFromOperand(invokeOp, 3);
 
                     if (kernel == null) {
                         kernel = new long[]{2, 2};
@@ -1035,9 +1035,9 @@ public final class TosaCodeGenerator {
             // AvgPool2D operation
             case "AvgPool2D" -> {
                 if (!operandHandles.isEmpty()) {
-                    long[] kernel = extractLongArrayFromOperand(invokeOp, 1, ctx);
-                    long[] stride = extractLongArrayFromOperand(invokeOp, 2, ctx);
-                    long[] pad = extractLongArrayFromOperand(invokeOp, 3, ctx);
+                    long[] kernel = extractLongArrayFromOperand(invokeOp, 1);
+                    long[] stride = extractLongArrayFromOperand(invokeOp, 2);
+                    long[] pad = extractLongArrayFromOperand(invokeOp, 3);
 
                     if (kernel == null) {
                         kernel = new long[]{2, 2};
@@ -1075,7 +1075,7 @@ public final class TosaCodeGenerator {
             case "Reshape" -> {
                 if (!operandHandles.isEmpty()) {
                     // Extract new shape from the operand
-                    long[] newShape = extractLongArrayFromOperand(invokeOp, 1, ctx);
+                    long[] newShape = extractLongArrayFromOperand(invokeOp, 1);
 
                     if (newShape == null) {
                         // If we can't extract the shape, try to use a default flatten
@@ -1124,17 +1124,6 @@ public final class TosaCodeGenerator {
         }
 
         return result;
-    }
-
-    /**
-     * Convert Java type to native TOSA tensor type.
-     *
-     * @param ctx Generator context
-     * @param type The Java TypeElement
-     * @return MLIR tensor type handle
-     */
-    private static MemorySegment javaTypeToNativeTosaType(GeneratorContext ctx, TypeElement type) {
-        return javaTypeToNativeTosaType(ctx, type, 1); // Default to 1D dynamic tensors
     }
 
     /**
@@ -1253,12 +1242,11 @@ public final class TosaCodeGenerator {
      *
      * @param invokeOp     The invoke operation whose operand to extract
      * @param operandIndex 0-based index of the array operand within the invocation
-     * @param ctx          Generator context (unused, kept for signature consistency)
      * @return The extracted long[] value, or {@code null} if the value is not a
      *         statically-known constant (falls back to caller's default)
      */
     private static long[] extractLongArrayFromOperand(
-            JavaOp.InvokeOp invokeOp, int operandIndex, GeneratorContext ctx) {
+            JavaOp.InvokeOp invokeOp, int operandIndex) {
         List<Value> operands = invokeOp.operands();
         if (operandIndex >= operands.size()) {
             return null;
