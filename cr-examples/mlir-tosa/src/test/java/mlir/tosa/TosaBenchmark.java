@@ -25,8 +25,8 @@ import static mlir.tosa.TosaOperators.*;
  */
 public class TosaBenchmark {
 
-    private static final int WARMUP_ITERATIONS = 20_000;
-    private static final int BENCHMARK_ITERATIONS = 100_000;
+    private static final int WARMUP_ITERATIONS = 2_000;
+    private static final int BENCHMARK_ITERATIONS = 10_000;
     private static final int NUM_RANDOM_INPUTS = 100;
 
     /**
